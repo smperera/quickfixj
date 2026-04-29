@@ -44,7 +44,7 @@ public class SessionStateTest  {
     @Test
     public void testTimeoutDefaultsAreNonzero() {
         SessionState state = new SessionState(new Object(), null, 0, false, null,
-            Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
+            null, Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
         state.setLastReceivedTime(900);
         assertFalse("logon timeout not init'ed", state.isLogonTimedOut());
 
@@ -56,7 +56,7 @@ public class SessionStateTest  {
     @Test
     public void testTestRequestTiming() {
         SessionState state = new SessionState(new Object(), null, 0, false, null,
-            Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
+            null, Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
         state.setLastReceivedTime(950);
         state.setHeartBeatInterval(50);
         assertFalse("testRequest shouldn't be needed yet", state.isTestRequestNeeded());
@@ -71,9 +71,26 @@ public class SessionStateTest  {
     }
 
     @Test
+    public void testHeartbeatTiming() {
+        // we set a HB interval of 2 seconds = 2000ms
+        SessionState state = new SessionState(new Object(), null, 2 /* HB interval */, false, null,
+                null, Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
+
+        long now = System.currentTimeMillis();
+        timeSource.setSystemTimes(now);
+        state.setLastSentTime(now);
+        assertFalse("heartbeat shouldn't be needed yet", state.isHeartBeatNeeded());
+        timeSource.increment(1000);
+        assertFalse("heartbeat shouldn't be needed yet", state.isHeartBeatNeeded());
+        timeSource.increment(1000);
+        // current time is now 2000ms further since the start, i.e. the HB interval has elapsed
+        assertTrue("heartbeat should be needed", state.isHeartBeatNeeded());
+    }
+
+    @Test
     public void testSessionTimeout() {
         SessionState state = new SessionState(new Object(), null, 30, false, null,
-            Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
+            null, Session.DEFAULT_TEST_REQUEST_DELAY_MULTIPLIER, Session.DEFAULT_HEARTBEAT_TIMEOUT_MULTIPLIER);
 
         // session should timeout after 2.4 * 30 = 72 seconds
         state.setLastReceivedTime(950_000);

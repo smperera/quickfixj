@@ -21,6 +21,8 @@ package quickfix;
 
 import org.quickfixj.QFJException;
 import org.quickfixj.SimpleCache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import quickfix.field.ApplVerID;
 import quickfix.field.DefaultApplVerID;
 
@@ -37,7 +39,8 @@ import java.util.Set;
  * initiators) for creating sessions.
  */
 public class DefaultSessionFactory implements SessionFactory {
-    private static final SimpleCache<String, DataDictionary> dictionaryCache = new SimpleCache<>(path -> {
+    private static final Logger LOG = LoggerFactory.getLogger(DefaultSessionFactory.class);
+    private static final SimpleCache<String, DataDictionary> DICTIONARY_CACHE = new SimpleCache<>(path -> {
         try {
             return new DataDictionary(path);
         } catch (ConfigError e) {
@@ -47,23 +50,26 @@ public class DefaultSessionFactory implements SessionFactory {
 
     private final Application application;
     private final MessageStoreFactory messageStoreFactory;
+    private final MessageQueueFactory messageQueueFactory;
     private final LogFactory logFactory;
     private final MessageFactory messageFactory;
     private final SessionScheduleFactory sessionScheduleFactory;
 
     public DefaultSessionFactory(Application application, MessageStoreFactory messageStoreFactory,
-            LogFactory logFactory) {
+                                 LogFactory logFactory) {
         this.application = application;
         this.messageStoreFactory = messageStoreFactory;
+        this.messageQueueFactory = new InMemoryMessageQueueFactory();
         this.logFactory = logFactory;
         this.messageFactory = new DefaultMessageFactory();
         this.sessionScheduleFactory = new DefaultSessionScheduleFactory();
     }
 
     public DefaultSessionFactory(Application application, MessageStoreFactory messageStoreFactory,
-            LogFactory logFactory, MessageFactory messageFactory) {
+                                 LogFactory logFactory, MessageFactory messageFactory) {
         this.application = application;
         this.messageStoreFactory = messageStoreFactory;
+        this.messageQueueFactory = new InMemoryMessageQueueFactory();
         this.logFactory = logFactory;
         this.messageFactory = messageFactory;
         this.sessionScheduleFactory = new DefaultSessionScheduleFactory();
@@ -74,6 +80,18 @@ public class DefaultSessionFactory implements SessionFactory {
                                  SessionScheduleFactory sessionScheduleFactory) {
         this.application = application;
         this.messageStoreFactory = messageStoreFactory;
+        this.messageQueueFactory = new InMemoryMessageQueueFactory();
+        this.logFactory = logFactory;
+        this.messageFactory = messageFactory;
+        this.sessionScheduleFactory = sessionScheduleFactory;
+    }
+
+    public DefaultSessionFactory(Application application, MessageStoreFactory messageStoreFactory,
+                                 MessageQueueFactory messageQueueFactory, LogFactory logFactory,
+                                 MessageFactory messageFactory, SessionScheduleFactory sessionScheduleFactory) {
+        this.application = application;
+        this.messageStoreFactory = messageStoreFactory;
+        this.messageQueueFactory = messageQueueFactory;
         this.logFactory = logFactory;
         this.messageFactory = messageFactory;
         this.sessionScheduleFactory = sessionScheduleFactory;
@@ -154,12 +172,13 @@ public class DefaultSessionFactory implements SessionFactory {
                     processPreFixtDataDictionary(sessionID, settings, dataDictionaryProvider);
                 }
             }
+            ValidationSettings validationSettings = createValidationSettings(sessionID, settings);
 
             int heartbeatInterval = 0;
             if (connectionType.equals(SessionFactory.INITIATOR_CONNECTION_TYPE)) {
                 heartbeatInterval = (int) settings.getLong(sessionID, Session.SETTING_HEARTBTINT);
                 if (heartbeatInterval <= 0) {
-                    throw new ConfigError("Heartbeat must be greater than zero");
+                    throw new ConfigError("Heartbeat interval must be greater than zero");
                 }
             }
 
@@ -213,6 +232,7 @@ public class DefaultSessionFactory implements SessionFactory {
             final boolean enableNextExpectedMsgSeqNum = getSetting(settings, sessionID, Session.SETTING_ENABLE_NEXT_EXPECTED_MSG_SEQ_NUM, false);
             final boolean enableLastMsgSeqNumProcessed = getSetting(settings, sessionID, Session.SETTING_ENABLE_LAST_MSG_SEQ_NUM_PROCESSED, false);
             final int resendRequestChunkSize = getSetting(settings, sessionID, Session.SETTING_RESEND_REQUEST_CHUNK_SIZE, Session.DEFAULT_RESEND_RANGE_CHUNK_SIZE);
+            final boolean allowPossDup = getSetting(settings, sessionID, Session.SETTING_ALLOW_POS_DUP_MESSAGES, false);
 
             final int[] logonIntervals = getLogonIntervalsInSeconds(settings, sessionID);
             final Set<InetAddress> allowedRemoteAddresses = getInetAddresses(settings, sessionID);
@@ -221,8 +241,8 @@ public class DefaultSessionFactory implements SessionFactory {
 
             final List<StringField> logonTags = getLogonTags(settings, sessionID);
 
-            final Session session = new Session(application, messageStoreFactory, sessionID,
-                    dataDictionaryProvider, sessionSchedule, logFactory,
+            final Session session = new Session(application, messageStoreFactory, messageQueueFactory,
+                    sessionID, dataDictionaryProvider, validationSettings, sessionSchedule, logFactory,
                     messageFactory, heartbeatInterval, checkLatency, maxLatency, timestampPrecision,
                     resetOnLogon, resetOnLogout, resetOnDisconnect, refreshOnLogon, checkCompID,
                     redundantResentRequestAllowed, persistMessages, useClosedIntervalForResend,
@@ -231,7 +251,7 @@ public class DefaultSessionFactory implements SessionFactory {
                     rejectInvalidMessage, rejectMessageOnUnhandledException, requiresOrigSendingTime,
                     forceResendWhenCorruptedStore, allowedRemoteAddresses, validateIncomingMessage,
                     resendRequestChunkSize, enableNextExpectedMsgSeqNum, enableLastMsgSeqNumProcessed,
-                    validateChecksum, logonTags, heartBeatTimeoutMultiplier);
+                    validateChecksum, logonTags, heartBeatTimeoutMultiplier, allowPossDup);
 
             session.setLogonTimeout(logonTimeout);
             session.setLogoutTimeout(logoutTimeout);
@@ -254,7 +274,7 @@ public class DefaultSessionFactory implements SessionFactory {
     }
 
     private void processPreFixtDataDictionary(SessionID sessionID, SessionSettings settings,
-            DefaultDataDictionaryProvider dataDictionaryProvider) throws ConfigError,
+                                              DefaultDataDictionaryProvider dataDictionaryProvider) throws ConfigError,
             FieldConvertError {
         final DataDictionary dataDictionary = createDataDictionary(sessionID, settings,
                 Session.SETTING_DATA_DICTIONARY, sessionID.getBeginString());
@@ -264,40 +284,46 @@ public class DefaultSessionFactory implements SessionFactory {
     }
 
     private DataDictionary createDataDictionary(SessionID sessionID, SessionSettings settings,
-            String settingsKey, String beginString) throws ConfigError, FieldConvertError {
+                                                String settingsKey, String beginString) throws ConfigError, FieldConvertError {
         final String path = getDictionaryPath(sessionID, settings, settingsKey, beginString);
-        final DataDictionary dataDictionary = getDataDictionary(path);
+        return getDataDictionary(path);
+    }
 
-        if (settings.isSetting(sessionID, Session.SETTING_VALIDATE_FIELDS_OUT_OF_ORDER)) {
-            dataDictionary.setCheckFieldsOutOfOrder(settings.getBool(sessionID,
-                    Session.SETTING_VALIDATE_FIELDS_OUT_OF_ORDER));
+    private ValidationSettings createValidationSettings(SessionID sessionID, SessionSettings settings) throws FieldConvertError, ConfigError {
+        ValidationSettings validationSettings = new ValidationSettings();
+
+        validationSettings.setCheckFieldsOutOfOrder(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_VALIDATE_FIELDS_OUT_OF_ORDER, validationSettings.isCheckFieldsOutOfOrder()));
+
+        validationSettings.setCheckFieldsHaveValues(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_VALIDATE_FIELDS_HAVE_VALUES, validationSettings.isCheckFieldsHaveValues()));
+
+        validationSettings.setCheckUnorderedGroupFields(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_VALIDATE_UNORDERED_GROUP_FIELDS, validationSettings.isCheckUnorderedGroupFields()));
+
+        validationSettings.setCheckUserDefinedFields(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_VALIDATE_USER_DEFINED_FIELDS, validationSettings.isCheckUserDefinedFields()));
+
+        validationSettings.setAllowUnknownMessageFields(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_ALLOW_UNKNOWN_MSG_FIELDS, validationSettings.isAllowUnknownMessageFields()));
+
+        validationSettings.setFirstFieldInGroupIsDelimiter(settings.getBoolOrDefault(sessionID,
+                Session.SETTING_FIRST_FIELD_IN_GROUP_IS_DELIMITER, validationSettings.isFirstFieldInGroupIsDelimiter()));
+
+        validateValidationSettings(validationSettings);
+
+        return validationSettings;
+    }
+
+    private void validateValidationSettings(ValidationSettings validationSettings) {
+        if (validationSettings.isFirstFieldInGroupIsDelimiter() && validationSettings.isCheckUnorderedGroupFields()) {
+            LOG.warn("Setting " + Session.SETTING_FIRST_FIELD_IN_GROUP_IS_DELIMITER
+                    + " requires " + Session.SETTING_VALIDATE_UNORDERED_GROUP_FIELDS + " to be set to false");
         }
-
-        if (settings.isSetting(sessionID, Session.SETTING_VALIDATE_FIELDS_HAVE_VALUES)) {
-            dataDictionary.setCheckFieldsHaveValues(settings.getBool(sessionID,
-                    Session.SETTING_VALIDATE_FIELDS_HAVE_VALUES));
-        }
-
-        if (settings.isSetting(sessionID, Session.SETTING_VALIDATE_UNORDERED_GROUP_FIELDS)) {
-            dataDictionary.setCheckUnorderedGroupFields(settings.getBool(sessionID,
-                    Session.SETTING_VALIDATE_UNORDERED_GROUP_FIELDS));
-        }
-
-        if (settings.isSetting(sessionID, Session.SETTING_VALIDATE_USER_DEFINED_FIELDS)) {
-            dataDictionary.setCheckUserDefinedFields(settings.getBool(sessionID,
-                    Session.SETTING_VALIDATE_USER_DEFINED_FIELDS));
-        }
-
-        if (settings.isSetting(sessionID, Session.SETTING_ALLOW_UNKNOWN_MSG_FIELDS)) {
-            dataDictionary.setAllowUnknownMessageFields(settings.getBool(sessionID,
-                    Session.SETTING_ALLOW_UNKNOWN_MSG_FIELDS));
-        }
-
-        return dataDictionary;
     }
 
     private void processFixtDataDictionaries(SessionID sessionID, SessionSettings settings,
-            DefaultDataDictionaryProvider dataDictionaryProvider) throws ConfigError,
+                                             DefaultDataDictionaryProvider dataDictionaryProvider) throws ConfigError,
             FieldConvertError {
         dataDictionaryProvider.addTransportDictionary(
                 sessionID.getBeginString(),
@@ -347,7 +373,7 @@ public class DefaultSessionFactory implements SessionFactory {
     }
 
     private String getDictionaryPath(SessionID sessionID, SessionSettings settings,
-            String settingsKey, String beginString) throws ConfigError, FieldConvertError {
+                                     String settingsKey, String beginString) throws ConfigError, FieldConvertError {
         String path;
         if (settings.isSetting(sessionID, settingsKey)) {
             path = settings.getString(sessionID, settingsKey);
@@ -363,7 +389,7 @@ public class DefaultSessionFactory implements SessionFactory {
 
     private DataDictionary getDataDictionary(String path) throws ConfigError {
         try {
-            return dictionaryCache.computeIfAbsent(path);
+            return DICTIONARY_CACHE.computeIfAbsent(path);
         } catch (QFJException e) {
             final Throwable cause = e.getCause();
             if (cause instanceof ConfigError) {
@@ -384,7 +410,7 @@ public class DefaultSessionFactory implements SessionFactory {
                 throw new ConfigError(e);
             }
         }
-        return new int[] { 5 }; // default value
+        return new int[]{5}; // default value
     }
 
     private Set<InetAddress> getInetAddresses(SessionSettings settings, SessionID sessionID)
@@ -402,26 +428,26 @@ public class DefaultSessionFactory implements SessionFactory {
     }
 
     private boolean getSetting(SessionSettings settings, SessionID sessionID, String key,
-            boolean defaultValue) throws ConfigError, FieldConvertError {
+                               boolean defaultValue) throws ConfigError, FieldConvertError {
         return settings.isSetting(sessionID, key) ? settings.getBool(sessionID, key) : defaultValue;
     }
 
     private int getSetting(SessionSettings settings, SessionID sessionID, String key,
-            int defaultValue) throws ConfigError, FieldConvertError {
+                           int defaultValue) throws ConfigError, FieldConvertError {
         return settings.isSetting(sessionID, key)
                 ? (int) settings.getLong(sessionID, key)
                 : defaultValue;
     }
 
     private double getSetting(SessionSettings settings, SessionID sessionID, String key,
-            double defaultValue) throws ConfigError, FieldConvertError {
+                              double defaultValue) throws ConfigError, FieldConvertError {
         return settings.isSetting(sessionID, key)
                 ? Double.parseDouble(settings.getString(sessionID, key))
                 : defaultValue;
     }
 
     private UtcTimestampPrecision getTimestampPrecision(SessionSettings settings, SessionID sessionID,
-            UtcTimestampPrecision defaultValue) throws ConfigError, FieldConvertError {
+                                                        UtcTimestampPrecision defaultValue) throws ConfigError, FieldConvertError {
         if (settings.isSetting(sessionID, Session.SETTING_TIMESTAMP_PRECISION)) {
             String string = settings.getString(sessionID, Session.SETTING_TIMESTAMP_PRECISION);
             try {
@@ -436,13 +462,13 @@ public class DefaultSessionFactory implements SessionFactory {
 
     private List<StringField> getLogonTags(SessionSettings settings, SessionID sessionID) throws ConfigError, FieldConvertError {
         List<StringField> logonTags = new ArrayList<>();
-        for (int index = 0;; index++) {
+        for (int index = 0; ; index++) {
             final String logonTagSetting = Session.SETTING_LOGON_TAG
                     + (index == 0 ? "" : NumbersCache.get(index));
             if (settings.isSetting(sessionID, logonTagSetting)) {
                 String tag = settings.getString(sessionID, logonTagSetting);
                 String[] split = tag.split("=", 2);
-                StringField stringField = new StringField(Integer.valueOf(split[0]), split[1]);
+                StringField stringField = new StringField(Integer.parseInt(split[0]), split[1]);
                 logonTags.add(stringField);
             } else {
                 break;

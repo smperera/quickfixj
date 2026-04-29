@@ -77,7 +77,9 @@ public class SessionFactoryTestSupport implements SessionFactory {
         private Supplier<SessionID> sessionIDSupplier = () -> new SessionID(beginString, senderCompID, targetCompID);
         private Supplier<Application> applicationSupplier = UnitTestApplication::new;
         private Supplier<MessageStoreFactory> messageStoreFactorySupplier = MemoryStoreFactory::new;
+        private Supplier<MessageQueueFactory> messageQueueFactorySupplier = InMemoryMessageQueueFactory::new;
         private Supplier<DataDictionaryProvider> dataDictionaryProviderSupplier = () -> null;
+        private Supplier<ValidationSettings> validationSettingsSupplier = ValidationSettings::new;
         private Supplier<SessionSchedule> sessionScheduleSupplier = () -> null;
         private Supplier<LogFactory> logFactorySupplier = () -> new ScreenLogFactory(true, true, true);
         private Supplier<MessageFactory> messageFactorySupplier = DefaultMessageFactory::new;
@@ -111,11 +113,12 @@ public class SessionFactoryTestSupport implements SessionFactory {
         private boolean enableNextExpectedMsgSeqNum = false;
         private final boolean enableLastMsgSeqNumProcessed = false;
         private final boolean validateChecksum = true;
+        private final boolean allowPosDup = false;
         private List<StringField> logonTags = new ArrayList<>();
 
         public Session build() {
-            return new Session(applicationSupplier.get(), messageStoreFactorySupplier.get(), sessionIDSupplier.get(),
-                    dataDictionaryProviderSupplier.get(), sessionScheduleSupplier.get(), logFactorySupplier.get(),
+            return new Session(applicationSupplier.get(), messageStoreFactorySupplier.get(), messageQueueFactorySupplier.get(),
+                    sessionIDSupplier.get(), dataDictionaryProviderSupplier.get(), validationSettingsSupplier.get(), sessionScheduleSupplier.get(), logFactorySupplier.get(),
                     messageFactorySupplier.get(), sessionHeartbeatIntervalSupplier.get(), checkLatency, maxLatency,
                     timestampPrecision, resetOnLogon, resetOnLogout, resetOnDisconnect, refreshMessageStoreAtLogon,
                     checkCompID, redundantResentRequestsAllowed, persistMessages, useClosedRangeForResend,
@@ -123,7 +126,7 @@ public class SessionFactoryTestSupport implements SessionFactory {
                     resetOnError, disconnectOnError, disableHeartBeatCheck, false, rejectInvalidMessage,
                     rejectMessageOnUnhandledException, requiresOrigSendingTime, forceResendWhenCorruptedStore,
                     allowedRemoteAddresses, validateIncomingMessage, resendRequestChunkSize, enableNextExpectedMsgSeqNum,
-                    enableLastMsgSeqNumProcessed, validateChecksum, logonTags, heartBeatTimeoutMultiplier);
+                    enableLastMsgSeqNumProcessed, validateChecksum, logonTags, heartBeatTimeoutMultiplier, allowPosDup);
         }
 
         public Builder setBeginString(final String beginString) {
@@ -158,8 +161,18 @@ public class SessionFactoryTestSupport implements SessionFactory {
             return this;
         }
 
+        public Builder setMessageQueueFactory(final MessageQueueFactory messageQueueFactory) {
+            this.messageQueueFactorySupplier = () -> messageQueueFactory;
+            return this;
+        }
+
         public Builder setDataDictionaryProvider(final DataDictionaryProvider dataDictionaryProvider) {
             this.dataDictionaryProviderSupplier = () -> dataDictionaryProvider;
+            return this;
+        }
+
+        public Builder setValidationSettings(final ValidationSettings validationSettings) {
+            this.validationSettingsSupplier = () -> validationSettings;
             return this;
         }
 

@@ -23,12 +23,14 @@ import org.apache.mina.core.buffer.IoBuffer;
 import org.apache.mina.core.buffer.SimpleBufferAllocator;
 import org.apache.mina.core.service.IoAcceptor;
 import org.apache.mina.filter.codec.ProtocolCodecFilter;
+import org.apache.mina.filter.ssl.SslFilter;
 import quickfix.Acceptor;
 import quickfix.Application;
 import quickfix.ConfigError;
 import quickfix.DefaultSessionFactory;
 import quickfix.FieldConvertError;
 import quickfix.LogFactory;
+import quickfix.LogUtil;
 import quickfix.MessageFactory;
 import quickfix.MessageStoreFactory;
 import quickfix.RuntimeError;
@@ -43,12 +45,13 @@ import quickfix.mina.NetworkingOptions;
 import quickfix.mina.ProtocolFactory;
 import quickfix.mina.SessionConnector;
 import quickfix.mina.message.FIXProtocolCodecFactory;
+import quickfix.mina.ssl.AcceptorSslFilter;
 import quickfix.mina.ssl.SSLConfig;
 import quickfix.mina.ssl.SSLContextFactory;
-import quickfix.mina.ssl.SSLFilter;
 import quickfix.mina.ssl.SSLSupport;
 
 import javax.net.ssl.SSLContext;
+import java.io.IOException;
 import java.net.SocketAddress;
 import java.security.GeneralSecurityException;
 import java.util.Collection;
@@ -56,6 +59,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Abstract base class for socket acceptors.
@@ -64,7 +69,7 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
     private final Map<SocketAddress, AcceptorSessionProvider> sessionProviders = new HashMap<>();
     private final SessionFactory sessionFactory;
     private final Map<SocketAddress, AcceptorSocketDescriptor> socketDescriptorForAddress = new HashMap<>();
-    private final Map<AcceptorSocketDescriptor, IoAcceptor> ioAcceptors = new HashMap<>();
+    private final ConcurrentMap<AcceptorSocketDescriptor, IoAcceptor> ioAcceptors = new ConcurrentHashMap<>();
 
     protected AbstractSocketAcceptor(SessionSettings settings, SessionFactory sessionFactory)
             throws ConfigError {
@@ -75,15 +80,15 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
     }
 
     protected AbstractSocketAcceptor(Application application,
-            MessageStoreFactory messageStoreFactory, SessionSettings settings,
-            MessageFactory messageFactory) throws ConfigError {
+                                     MessageStoreFactory messageStoreFactory, SessionSettings settings,
+                                     MessageFactory messageFactory) throws ConfigError {
         this(application, messageStoreFactory, settings, new ScreenLogFactory(settings),
                 messageFactory);
     }
 
     protected AbstractSocketAcceptor(Application application,
-            MessageStoreFactory messageStoreFactory, SessionSettings settings,
-            LogFactory logFactory, MessageFactory messageFactory) throws ConfigError {
+                                     MessageStoreFactory messageStoreFactory, SessionSettings settings,
+                                     LogFactory logFactory, MessageFactory messageFactory) throws ConfigError {
         this(settings, new DefaultSessionFactory(application, messageStoreFactory, logFactory,
                 messageFactory));
     }
@@ -91,12 +96,13 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
     // TODO SYNC Does this method really need synchronization?
     protected synchronized void startAcceptingConnections() throws ConfigError {
 
-        SocketAddress address = null;
-        try {
-            createSessions(getSettings());
-            startSessionTimer();
+        boolean continueInitOnError = isContinueInitOnError();
+        createSessions(getSettings(), continueInitOnError);
+        startSessionTimer();
 
-            for (AcceptorSocketDescriptor socketDescriptor : socketDescriptorForAddress.values()) {
+        SocketAddress address = null;
+        for (AcceptorSocketDescriptor socketDescriptor : socketDescriptorForAddress.values()) {
+            try {
                 address = socketDescriptor.getAddress();
                 IoAcceptor ioAcceptor = getIoAcceptor(socketDescriptor);
                 CompositeIoFilterChainBuilder ioFilterChainBuilder = new CompositeIoFilterChainBuilder(getIoFilterChainBuilder());
@@ -112,24 +118,26 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
                 ioAcceptor.setCloseOnDeactivation(false);
                 ioAcceptor.bind(socketDescriptor.getAddress());
                 log.info("Listening for connections at {} for session(s) {}", address, socketDescriptor.getAcceptedSessions().keySet());
+            } catch (IOException | GeneralSecurityException | ConfigError e) {
+                // we cannot log for a specific session here
+                if (continueInitOnError) {
+                    log.warn("error during session initialization for session(s) {}, continuing...", socketDescriptor.getAcceptedSessions().keySet(), e);
+                } else {
+                    log.error("Cannot start acceptor session for {}", address, e);
+                    throw new RuntimeError(e);
+                }
             }
-        } catch (FieldConvertError e) {
-            throw new ConfigError(e);
-        } catch (Exception e) {
-            log.error("Cannot start acceptor session for {}, error: {}", address, e);
-            throw new RuntimeError(e);
         }
     }
 
     private void installSSL(AcceptorSocketDescriptor descriptor,
-            CompositeIoFilterChainBuilder ioFilterChainBuilder) throws GeneralSecurityException {
+                            CompositeIoFilterChainBuilder ioFilterChainBuilder) throws GeneralSecurityException {
         log.info("Installing SSL filter for {}", descriptor.getAddress());
         SSLConfig sslConfig = descriptor.getSslConfig();
         SSLContext sslContext = SSLContextFactory.getInstance(sslConfig);
-        SSLFilter sslFilter = new SSLFilter(sslContext);
-        sslFilter.setUseClientMode(false);
+        SslFilter sslFilter = new AcceptorSslFilter(sslContext);
         sslFilter.setNeedClientAuth(sslConfig.isNeedClientAuth());
-        sslFilter.setCipherSuites(sslConfig.getEnabledCipherSuites() != null ? sslConfig.getEnabledCipherSuites()
+        sslFilter.setEnabledCipherSuites(sslConfig.getEnabledCipherSuites() != null ? sslConfig.getEnabledCipherSuites()
                 : SSLSupport.getDefaultCipherSuites(sslContext));
         sslFilter.setEnabledProtocols(sslConfig.getEnabledProtocols() != null ? sslConfig.getEnabledProtocols()
                 : SSLSupport.getSupportedProtocols(sslContext));
@@ -149,7 +157,7 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
                 SessionSettings settings = getSettings();
                 NetworkingOptions networkingOptions = new NetworkingOptions(settings.getDefaultProperties());
                 networkingOptions.apply(ioAcceptor);
-                ioAcceptor.setHandler(new AcceptorIoHandler(sessionProvider, networkingOptions, getEventHandlingStrategy()));
+                ioAcceptor.setHandler(new AcceptorIoHandler(sessionProvider, settings, networkingOptions, getEventHandlingStrategy()));
             } catch (FieldConvertError e) {
                 throw new ConfigError(e);
             }
@@ -158,8 +166,8 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
         return ioAcceptor;
     }
 
-    private AcceptorSocketDescriptor getAcceptorSocketDescriptor(SessionSettings settings,
-            SessionID sessionID) throws ConfigError, FieldConvertError {
+    private void setupSession(SessionSettings settings, SessionID sessionID, boolean isTemplate, Map<SessionID, Session> allSessions)
+            throws ConfigError, FieldConvertError {
         int acceptTransportType = ProtocolFactory.SOCKET;
         if (settings.isSetting(sessionID, Acceptor.SETTING_SOCKET_ACCEPT_PROTOCOL)) {
             try {
@@ -178,8 +186,6 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
             if (acceptTransportType == ProtocolFactory.SOCKET) {
                 useSSL = true;
                 sslConfig = SSLSupport.getSslConfig(getSettings(), sessionID);
-            } else {
-                log.warn("SSL will not be enabled for transport type={}, session={}", acceptTransportType, sessionID);
             }
         }
 
@@ -204,42 +210,51 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
             socketDescriptorForAddress.put(acceptorAddress, descriptor);
         }
 
-        return descriptor;
+        if (!isTemplate) {
+            Session session = sessionFactory.create(sessionID, settings);
+            descriptor.acceptSession(session);
+            allSessions.put(sessionID, session);
+        }
+
+        if (acceptTransportType != ProtocolFactory.SOCKET
+                && getSettings().getBoolOrDefault(sessionID, SSLSupport.SETTING_USE_SSL, false)) {
+            LogUtil.logWarning(sessionID, "SSL is only supported for transport type SOCKET and will not be enabled for transport type=" + acceptTransportType);
+        }
     }
 
     private boolean equals(Object object1, Object object2) {
         return object1 == null ? object2 == null : object1.equals(object2);
     }
 
-    private void createSessions(SessionSettings settings) throws ConfigError, FieldConvertError {
+    private void createSessions(SessionSettings settings, boolean continueInitOnError) throws ConfigError {
         Map<SessionID, Session> allSessions = new HashMap<>();
-        boolean continueInitOnError = isContinueInitOnError();
-
-        for (Iterator<SessionID> i = settings.sectionIterator(); i.hasNext();) {
+        for (Iterator<SessionID> i = settings.sectionIterator(); i.hasNext(); ) {
             SessionID sessionID = i.next();
-            String connectionType = settings.getString(sessionID,
-                    SessionFactory.SETTING_CONNECTION_TYPE);
+            try {
+                String connectionType = null;
+                if (settings.isSetting(sessionID, SessionFactory.SETTING_CONNECTION_TYPE)) {
+                    connectionType = settings.getString(sessionID,
+                            SessionFactory.SETTING_CONNECTION_TYPE);
+                }
 
-            boolean isTemplate = false;
-            if (settings.isSetting(sessionID, Acceptor.SETTING_ACCEPTOR_TEMPLATE)) {
-                isTemplate = settings.getBool(sessionID, Acceptor.SETTING_ACCEPTOR_TEMPLATE);
-            }
+                if (SessionFactory.ACCEPTOR_CONNECTION_TYPE.equals(connectionType)) {
+                    boolean isTemplate = false;
+                    if (settings.isSetting(sessionID, Acceptor.SETTING_ACCEPTOR_TEMPLATE)) {
+                        try {
+                            isTemplate = settings.getBool(sessionID, Acceptor.SETTING_ACCEPTOR_TEMPLATE);
+                        } catch (FieldConvertError | ConfigError ex) {
+                            // ignore and use default
+                        }
+                    }
 
-            if (connectionType.equals(SessionFactory.ACCEPTOR_CONNECTION_TYPE)) {
-                try {
-                    AcceptorSocketDescriptor descriptor = getAcceptorSocketDescriptor(settings, sessionID);
-                    if (!isTemplate) {
-                        Session session = sessionFactory.create(sessionID, settings);
-                        descriptor.acceptSession(session);
-                        allSessions.put(sessionID, session);
-                    }
-                } catch (Throwable t) {
-                    if (continueInitOnError) {
-                        log.error("error during session initialization for {}, continuing...", sessionID, t);
-                    } else {
-                        throw t instanceof ConfigError ? (ConfigError) t : new ConfigError(
-                                "error during session initialization", t);
-                    }
+                    setupSession(settings, sessionID, isTemplate, allSessions);
+                }
+            } catch (Throwable t) {
+                if (continueInitOnError) {
+                    LogUtil.logWarning(sessionID, "error during session initialization, continuing...", t);
+                } else {
+                    throw t instanceof ConfigError ? (ConfigError) t : new ConfigError(
+                            "error during session initialization", t);
                 }
             }
         }
@@ -320,6 +335,7 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
             this.acceptorSessions = acceptorSessions;
         }
 
+        @Override
         public Session getSession(SessionID sessionID, SessionConnector connector) {
             return acceptorSessions.get(sessionID);
         }
@@ -330,9 +346,9 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
         return ehs == null ? 0 : ehs.getQueueSize();
     }
 
-    protected abstract EventHandlingStrategy getEventHandlingStrategy() ;
+    protected abstract EventHandlingStrategy getEventHandlingStrategy();
 
-    private class DefaultAcceptorSessionProvider implements AcceptorSessionProvider {
+    private static class DefaultAcceptorSessionProvider implements AcceptorSessionProvider {
 
         private final Map<SessionID, Session> acceptorSessions;
 
@@ -340,6 +356,7 @@ public abstract class AbstractSocketAcceptor extends SessionConnector implements
             this.acceptorSessions = acceptorSessions;
         }
 
+        @Override
         public Session getSession(SessionID sessionID, SessionConnector ignored) {
             Session session = acceptorSessions.get(sessionID);
             if (session == null) {

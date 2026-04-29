@@ -27,9 +27,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.InvalidParameterException;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Properties;
 import java.util.Set;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Random;
@@ -116,7 +119,11 @@ public class SessionSettingsTest {
         assertFalse("wrong setting", settings.getBool(sessionID1, "TestBoolFalse"));
         settings.setBool(sessionID3, "TestBool", true);
         assertTrue("wrong settings", settings.getBool(sessionID3, "TestBool"));
-
+        assertFalse(settings.getBoolOrDefault(sessionID3, "unknownSetting", false));
+        assertTrue(settings.getBoolOrDefault(sessionID3, "unknownSetting", true));
+        assertTrue(settings.getBoolOrDefault(sessionID3, "TestBool", false));
+        assertTrue(settings.getBoolOrDefault(sessionID3, "TestBool", true));
+        
         settings.setString(sessionID3, "TestString", "foo");
         assertEquals("wrong setting", "foo", settings.getString(sessionID3, "TestString"));
 
@@ -228,6 +235,17 @@ public class SessionSettingsTest {
         assertEquals("mumble", settings.getString("foo"));
         assertEquals("fargle", settings.getString("baz"));
         assertEquals("bargle", settings.getString("FileStorePath"));
+    }
+
+    @Test
+    public void testMissingValues() throws ConfigError, FieldConvertError {
+        final SessionSettings settings = new SessionSettings();
+        assertEquals("1", settings.getStringOrDefault("a", "1"));
+        assertEquals("2", settings.getStringOrDefault("b", "2"));
+        assertEquals(3, settings.getIntOrDefault("c", 3));
+        assertEquals(4, settings.getIntOrDefault("d", 4));
+        assertEquals(5L, settings.getLongOrDefault("e", 5L));
+        assertEquals(6L, settings.getLongOrDefault("f", 6L));
     }
 
     @Test
@@ -372,6 +390,55 @@ public class SessionSettingsTest {
     public void testDefaultConstructor() {
         new SessionSettings();
         // Passes if no exception is thrown
+    }
+
+    @Test
+    public void testListConstructor() throws ConfigError {
+        List<String> listValues = new ArrayList<String>();
+        listValues.add("[SESSION]");
+        listValues.add("BeginString=FIX.4.2");
+        listValues.add("SenderCompID=Company");
+        listValues.add("SenderSubID=FixedIncome");
+        listValues.add("SenderLocationID=HongKong");
+        listValues.add("TargetCompID=CLIENT1");
+        listValues.add("TargetSubID=HedgeFund");
+        listValues.add("TargetLocationID=NYC\n");
+
+        final SessionSettings settings = new SessionSettings(listValues);
+        final SessionID id = settings.sectionIterator().next();
+        assertEquals("Company", id.getSenderCompID());
+        assertEquals("FixedIncome", id.getSenderSubID());
+        assertEquals("HongKong", id.getSenderLocationID());
+        assertEquals("CLIENT1", id.getTargetCompID());
+        assertEquals("HedgeFund", id.getTargetSubID());
+        assertEquals("NYC", id.getTargetLocationID());
+    }
+
+    @Test
+    public void testListPropertiesConstructor() throws ConfigError {
+        System.setProperty("test.2", "BAR");
+        final Properties properties = new Properties(System.getProperties());
+        properties.setProperty("test.1", "FOO");
+
+        List<String> listValues = new ArrayList<String>();
+        listValues.add("[SESSION]");
+        listValues.add("BeginString=FIX.4.2");
+        listValues.add("SenderCompID=Company");
+        listValues.add("SenderSubID=FixedIncome");
+        listValues.add("SenderLocationID=HongKong");
+        listValues.add("TargetCompID=CLIENT3_${test.1}_${test.2}");
+        listValues.add("TargetSubID=HedgeFund");
+        listValues.add("TargetLocationID=NYC\n");
+
+        final SessionSettings settings = new SessionSettings(listValues, properties);
+        final SessionID id = settings.sectionIterator().next();
+        assertEquals("Company", id.getSenderCompID());
+        assertEquals("FixedIncome", id.getSenderSubID());
+        assertEquals("HongKong", id.getSenderLocationID());
+        assertEquals("CLIENT3_FOO_BAR", id.getTargetCompID());
+        assertEquals("HedgeFund", id.getTargetSubID());
+        assertEquals("NYC", id.getTargetLocationID());
+
     }
 
     @Test
@@ -546,6 +613,51 @@ public class SessionSettingsTest {
 
         // verify test has passed
         assertTrue(testHasPassed.get());
+    }
+
+    @Test
+    public void testRemoveSectionBySessionID() throws ConfigError {
+        final Map<Object, Object> defaultSettings = createDefaultSettings();
+
+        final Map<Object, Object> pricingSection = createPricingSection();
+        final SessionID pricingSessionID = new SessionID("FIX.4.2:FOOBAR_PRICING->*");
+
+        final Map<Object, Object> tradingSection = createTradingSection();
+        final SessionID tradingSessionID = new SessionID("FIX.4.2:FOOBAR_TRADING->*");
+
+        final SessionSettings sessionSettings = new SessionSettings();
+        sessionSettings.set(new Dictionary(null, defaultSettings));
+        sessionSettings.set(pricingSessionID, new Dictionary("sessions", pricingSection));
+        sessionSettings.set(tradingSessionID, new Dictionary("sessions", tradingSection));
+
+        while (sessionSettings.sectionIterator().hasNext()) {
+            SessionID sessionID = sessionSettings.sectionIterator().next();
+            sessionSettings.removeSection(sessionID);
+        }
+
+        assertFalse(sessionSettings.sectionIterator().hasNext());
+    }
+
+    @Test
+    public void testRemoveSectionByPropertyKey() throws ConfigError {
+        final Map<Object, Object> defaultSettings = createDefaultSettings();
+
+        final Map<Object, Object> tradingSection = createTradingSection();
+        final SessionID tradingSessionID = new SessionID("FIX.4.2:FOOBAR_TRADING->*");
+
+        final SessionSettings sessionSettings = new SessionSettings();
+        sessionSettings.set(new Dictionary(null, defaultSettings));
+        sessionSettings.set(tradingSessionID, new Dictionary("sessions", tradingSection));
+
+        sessionSettings.removeSection("SocketAcceptPort", "7566");
+
+        Set<SessionID> expectedSessionIdSet = new HashSet<>();
+        while (sessionSettings.sectionIterator().hasNext()) {
+            SessionID sessionID = sessionSettings.sectionIterator().next();
+            expectedSessionIdSet.add(sessionID);
+        }
+
+        assertFalse(expectedSessionIdSet.contains(tradingSessionID));
     }
 
     private Map<Object, Object> createTradingSection() {

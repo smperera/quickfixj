@@ -1,6 +1,10 @@
 package quickfix;
 
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static quickfix.FixVersions.*;
 import static quickfix.field.ApplVerID.*;
 
@@ -9,6 +13,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import quickfix.field.*;
+import quickfix.fix44.MessageFactory;
 import quickfix.test.util.ExpectedTestFailure;
 
 /**
@@ -41,6 +46,7 @@ public class DefaultMessageFactoryTest {
         assertMessage(quickfix.fix50.Advertisement.class, MsgType.ADVERTISEMENT, factory.create(FixVersions.FIX50, MsgType.ADVERTISEMENT));
         assertMessage(quickfix.fix50sp1.Advertisement.class, MsgType.ADVERTISEMENT, factory.create(FixVersions.FIX50SP1, MsgType.ADVERTISEMENT));
         assertMessage(quickfix.fix50sp2.Advertisement.class, MsgType.ADVERTISEMENT, factory.create(FixVersions.FIX50SP2, MsgType.ADVERTISEMENT));
+        assertMessage(quickfix.fixlatest.Advertisement.class, MsgType.ADVERTISEMENT, factory.create(FixVersions.FIXLATEST, MsgType.ADVERTISEMENT));
         assertMessage(quickfix.Message.class, MsgType.ADVERTISEMENT, factory.create("unknown", MsgType.ADVERTISEMENT));
     }
 
@@ -56,6 +62,7 @@ public class DefaultMessageFactoryTest {
         assertMessage(quickfix.fix50.Email.class, MsgType.EMAIL, factory.create(BEGINSTRING_FIXT11, new ApplVerID(ApplVerID.FIX50), MsgType.EMAIL));
         assertMessage(quickfix.fix50sp1.Email.class, MsgType.EMAIL, factory.create(BEGINSTRING_FIXT11, new ApplVerID(ApplVerID.FIX50SP1), MsgType.EMAIL));
         assertMessage(quickfix.fix50sp2.Email.class, MsgType.EMAIL, factory.create(BEGINSTRING_FIXT11, new ApplVerID(ApplVerID.FIX50SP2), MsgType.EMAIL));
+        assertMessage(quickfix.fixlatest.Email.class, MsgType.EMAIL, factory.create(BEGINSTRING_FIXT11, new ApplVerID(ApplVerID.FIXLATEST), MsgType.EMAIL));
     }
 
     @Test
@@ -74,8 +81,27 @@ public class DefaultMessageFactoryTest {
         assertEquals(quickfix.fix50.News.NoLinesOfText.class, factory.create(FixVersions.FIX50, MsgType.NEWS, NoLinesOfText.FIELD).getClass());
         assertEquals(quickfix.fix50sp1.News.NoLinesOfText.class, factory.create(FixVersions.FIX50SP1, MsgType.NEWS, NoLinesOfText.FIELD).getClass());
         assertEquals(quickfix.fix50sp2.News.NoLinesOfText.class, factory.create(FixVersions.FIX50SP2, MsgType.NEWS, NoLinesOfText.FIELD).getClass());
+        assertEquals(quickfix.fixlatest.News.NoLinesOfText.class, factory.create(FixVersions.FIXLATEST, MsgType.NEWS, NoLinesOfText.FIELD).getClass());
         assertNull("if group can't be created return null",
                 factory.create(BEGINSTRING_FIX40, MsgType.MARKET_DATA_SNAPSHOT_FULL_REFRESH, NoMDEntries.FIELD));
+    }
+
+    @Test
+    public void testContextClassLoaderFactory() throws ClassNotFoundException {
+        ClassLoader customLoader = mock(ClassLoader.class);
+        doReturn(MessageFactory.class).when(customLoader).loadClass("foo.DefaultMessageFactory");
+
+        ClassLoader previousClassLoader = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(customLoader);
+
+        try {
+            factory.addFactory(BEGINSTRING_FIX44, "foo.DefaultMessageFactory");
+        } finally {
+            Thread.currentThread().setContextClassLoader(previousClassLoader);
+        }
+
+        verify(customLoader).loadClass("foo.DefaultMessageFactory");
+        verifyNoMoreInteractions(customLoader);
     }
 
     private static void assertMessage(Class<?> expectedMessageClass, String expectedMessageType, Message message) throws Exception {
@@ -93,7 +119,8 @@ public class DefaultMessageFactoryTest {
                 {ApplVerID.FIX44, quickfix.fix44.Email.class},
                 {ApplVerID.FIX50, quickfix.fix50.Email.class},
                 {ApplVerID.FIX50SP1, quickfix.fix50sp1.Email.class},
-                {ApplVerID.FIX50SP2, quickfix.fix50sp2.Email.class}
+                {ApplVerID.FIX50SP2, quickfix.fix50sp2.Email.class},
+                {ApplVerID.FIXLATEST, quickfix.fixlatest.Email.class}
         };
     }
 }

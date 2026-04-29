@@ -39,7 +39,9 @@ public class SSLSupport {
     public static final String SETTING_TRUST_MANAGER_FACTORY_ALGORITHM = "TrustManagerFactoryAlgorithm";
     public static final String SETTING_TRUST_STORE_TYPE = "TrustStoreType";
     public static final String SETTING_NEED_CLIENT_AUTH = "NeedClientAuth";
+    public static final String SETTING_ENDPOINT_IDENTIFICATION_ALGORITHM = "EndpointIdentificationAlgorithm";
     public static final String SETTING_USE_SNI = "UseSNI";
+    public static final String SETTING_SNI_HOST_NAME = "SNIHostName";
     public static final String SETTING_ENABLED_PROTOCOLS = "EnabledProtocols";
     public static final String SETTING_CIPHER_SUITES = "CipherSuites";
     static final String DEFAULT_STORE_TYPE = "JKS";
@@ -111,7 +113,9 @@ public class SSLSupport {
         sslConfig.setEnabledCipherSuites(getEnabledCipherSuites(sessionSettings, sessionID));
         sslConfig.setEnabledProtocols(getEnabledProtocols(sessionSettings, sessionID));
         sslConfig.setNeedClientAuth(isNeedClientAuth(sessionSettings, sessionID));
+        sslConfig.setEndpointIdentificationAlgorithm(getEndpointIdentificationAlgorithm(sessionSettings, sessionID));
         sslConfig.setUseSNI(isUseSNI(sessionSettings, sessionID));
+        sslConfig.setSniHostName(getSNIHostName(sessionSettings, sessionID));
 
         return sslConfig;
     }
@@ -150,7 +154,15 @@ public class SSLSupport {
         return "Y".equals(getString(sessionSettings, sessionID, SETTING_NEED_CLIENT_AUTH, "N"));
     }
 
+    public static String getEndpointIdentificationAlgorithm(SessionSettings sessionSettings, SessionID sessionID) {
+        return getString(sessionSettings, sessionID, SETTING_ENDPOINT_IDENTIFICATION_ALGORITHM, null);
+    }
+
     public static boolean isUseSNI(SessionSettings sessionSettings, SessionID sessionID) {
         return "Y".equals(getString(sessionSettings, sessionID, SETTING_USE_SNI, "N"));
+    }
+
+    public static String getSNIHostName(SessionSettings sessionSettings, SessionID sessionID) {
+        return getString(sessionSettings, sessionID, SETTING_SNI_HOST_NAME, null);
     }
 }

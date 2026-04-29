@@ -22,16 +22,12 @@ package quickfix.mina.initiator;
 import org.apache.mina.core.session.IoSession;
 import org.apache.mina.proxy.AbstractProxyIoHandler;
 
-import quickfix.mina.ssl.SSLFilter;
-
 class InitiatorProxyIoHandler extends AbstractProxyIoHandler {
     private final InitiatorIoHandler initiatorIoHandler;
-    private final SSLFilter sslFilter;
 
-    InitiatorProxyIoHandler(InitiatorIoHandler initiatorIoHandler, SSLFilter sslFilter) {
+    InitiatorProxyIoHandler(InitiatorIoHandler initiatorIoHandler) {
         super();
         this.initiatorIoHandler = initiatorIoHandler;
-        this.sslFilter = sslFilter;
     }
 
     @Override
@@ -40,7 +36,7 @@ class InitiatorProxyIoHandler extends AbstractProxyIoHandler {
     }
 
     @Override
-    public void sessionClosed(IoSession ioSession) throws Exception {
+    public void sessionClosed(IoSession ioSession) {
         this.initiatorIoHandler.sessionClosed(ioSession);
     }
 
@@ -60,9 +56,6 @@ class InitiatorProxyIoHandler extends AbstractProxyIoHandler {
     }
 
     @Override
-    public void proxySessionOpened(IoSession ioSession) throws Exception {
-        if (this.sslFilter != null) {
-            this.sslFilter.initiateHandshake(ioSession);
-        }
+    public void proxySessionOpened(IoSession ioSession) {
     }
 }

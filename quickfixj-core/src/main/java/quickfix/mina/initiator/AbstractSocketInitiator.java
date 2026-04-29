@@ -29,6 +29,7 @@ import quickfix.DefaultSessionFactory;
 import quickfix.FieldConvertError;
 import quickfix.Initiator;
 import quickfix.LogFactory;
+import quickfix.LogUtil;
 import quickfix.MessageFactory;
 import quickfix.MessageStoreFactory;
 import quickfix.Session;
@@ -47,10 +48,10 @@ import java.net.SocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
@@ -63,13 +64,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class AbstractSocketInitiator extends SessionConnector implements Initiator {
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
-    private final Set<IoSessionInitiator> initiators = new HashSet<>();
+    private final Set<IoSessionInitiator> initiators = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService scheduledReconnectExecutor;
     public static final String QFJ_RECONNECT_THREAD_PREFIX = "QFJ Reconnect Thread-";
 
     protected AbstractSocketInitiator(Application application,
-            MessageStoreFactory messageStoreFactory, SessionSettings settings,
-            LogFactory logFactory, MessageFactory messageFactory) throws ConfigError {
+                                      MessageStoreFactory messageStoreFactory, SessionSettings settings,
+                                      LogFactory logFactory, MessageFactory messageFactory) throws ConfigError {
         this(settings, new DefaultSessionFactory(application, messageStoreFactory, logFactory,
                 messageFactory));
     }
@@ -80,8 +81,8 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
     }
 
     protected AbstractSocketInitiator(Application application,
-            MessageStoreFactory messageStoreFactory, SessionSettings settings,
-            LogFactory logFactory, MessageFactory messageFactory, int numReconnectThreads) throws ConfigError {
+                                      MessageStoreFactory messageStoreFactory, SessionSettings settings,
+                                      LogFactory logFactory, MessageFactory messageFactory, int numReconnectThreads) throws ConfigError {
         this(settings, new DefaultSessionFactory(application, messageStoreFactory, logFactory,
                 messageFactory), numReconnectThreads);
     }
@@ -102,17 +103,18 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
     protected void createSessionInitiators()
             throws ConfigError {
         try {
-            createSessions();
+            boolean continueInitOnError = isContinueInitOnError();
+            createSessions(continueInitOnError);
             for (final Session session : getSessionMap().values()) {
-                createInitiator(session);
+                createInitiator(session, continueInitOnError);
             }
         } catch (final FieldConvertError e) {
             throw new ConfigError(e);
         }
     }
 
-    private void createInitiator(final Session session) throws ConfigError, FieldConvertError {
-                
+    private void createInitiator(final Session session, final boolean continueInitOnError) throws ConfigError, FieldConvertError {
+
         SessionSettings settings = getSettings();
         final SessionID sessionID = session.getSessionID();
         final int[] reconnectingIntervals = getReconnectIntervalInSeconds(sessionID);
@@ -122,8 +124,10 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
             throw new ConfigError("Must specify at least one socket address");
         }
 
-        SocketAddress localAddress = getLocalAddress(settings, sessionID);
+        // 1 minute by default, matches MINA
+        int connectTimeout = getSettings().getIntOrDefault(sessionID, Initiator.SETTING_SOCKET_CONNECT_TIMEOUT, 60);
 
+        SocketAddress localAddress = getLocalAddress(settings, session);
         final NetworkingOptions networkingOptions = new NetworkingOptions(getSettings()
                 .getSessionProperties(sessionID, true));
 
@@ -171,21 +175,29 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
         }
 
         ScheduledExecutorService scheduledExecutorService = (scheduledReconnectExecutor != null ? scheduledReconnectExecutor : getScheduledExecutorService());
-        final IoSessionInitiator ioSessionInitiator = new IoSessionInitiator(session,
-                socketAddresses, localAddress, reconnectingIntervals,
-                scheduledExecutorService, networkingOptions,
-                getEventHandlingStrategy(), getIoFilterChainBuilder(), sslEnabled, sslConfig,
-                proxyType, proxyVersion, proxyHost, proxyPort, proxyUser, proxyPassword, proxyDomain, proxyWorkstation);
+        try {
+            final IoSessionInitiator ioSessionInitiator = new IoSessionInitiator(session,
+                    socketAddresses, localAddress, connectTimeout, reconnectingIntervals,
+                    scheduledExecutorService, settings, networkingOptions,
+                    getEventHandlingStrategy(), getIoFilterChainBuilder(), sslEnabled, sslConfig,
+                    proxyType, proxyVersion, proxyHost, proxyPort, proxyUser, proxyPassword, proxyDomain, proxyWorkstation);
 
-        initiators.add(ioSessionInitiator);
-
+            initiators.add(ioSessionInitiator);
+        } catch (ConfigError e) {
+            if (continueInitOnError) {
+                LogUtil.logWarning(sessionID, "error during session initialization, continuing... ", e);
+            } else {
+                throw e;
+            }
+        }
     }
 
     // QFJ-482
-    private SocketAddress getLocalAddress(SessionSettings settings, final SessionID sessionID)
+    private SocketAddress getLocalAddress(SessionSettings settings, final Session session)
             throws ConfigError, FieldConvertError {
         // Check if use of socket local/bind address
         SocketAddress localAddress = null;
+        SessionID sessionID = session.getSessionID();
         if (settings.isSetting(sessionID, Initiator.SETTING_SOCKET_LOCAL_HOST)) {
             String host = settings.getString(sessionID, Initiator.SETTING_SOCKET_LOCAL_HOST);
             if ("localhost".equals(host)) {
@@ -196,17 +208,15 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
                 port = (int) settings.getLong(sessionID, Initiator.SETTING_SOCKET_LOCAL_PORT);
             }
             localAddress = ProtocolFactory.createSocketAddress(ProtocolFactory.SOCKET, host, port);
-            log.info("Using initiator local host: {}", localAddress);
+            session.getLog().onEvent("Using initiator local host: " + localAddress);
         }
         return localAddress;
     }
 
-    private void createSessions() throws ConfigError, FieldConvertError {
+    private void createSessions(boolean continueInitOnError) throws ConfigError, FieldConvertError {
         final SessionSettings settings = getSettings();
-        boolean continueInitOnError = isContinueInitOnError();
-
         final Map<SessionID, Session> initiatorSessions = new HashMap<>();
-        for (final Iterator<SessionID> i = settings.sectionIterator(); i.hasNext();) {
+        for (final Iterator<SessionID> i = settings.sectionIterator(); i.hasNext(); ) {
             final SessionID sessionID = i.next();
             if (isInitiatorSession(sessionID)) {
                 try {
@@ -216,7 +226,7 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
                     }
                 } catch (final Throwable e) {
                     if (continueInitOnError) {
-                        log.error("error during session initialization for {}, continuing...", sessionID, e);
+                        LogUtil.logWarning(sessionID, "error during session initialization, continuing...", e);
                     } else {
                         throw e instanceof ConfigError ? (ConfigError) e : new ConfigError(
                                 "error during session initialization", e);
@@ -226,13 +236,13 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
         }
         setSessions(initiatorSessions);
     }
-    
+
     public void createDynamicSession(SessionID sessionID) throws ConfigError {
 
         try {
             Session session = createSession(sessionID);
             super.addDynamicSession(session);
-            createInitiator(session);
+            createInitiator(session, isContinueInitOnError());
             startInitiators();
         } catch (final FieldConvertError e) {
             throw new ConfigError(e);
@@ -253,20 +263,18 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
                 throw new ConfigError(e);
             }
         }
-        return new int[] { 30 };
+        return new int[]{30};
     }
 
     private SocketAddress[] getSocketAddresses(SessionID sessionID) throws ConfigError {
         final SessionSettings settings = getSettings();
         final ArrayList<SocketAddress> addresses = new ArrayList<>();
-        for (int index = 0;; index++) {
+        for (int index = 0; ; index++) {
             try {
-                final String protocolKey = Initiator.SETTING_SOCKET_CONNECT_PROTOCOL
-                        + (index == 0 ? "" : Integer.toString(index));
-                final String hostKey = Initiator.SETTING_SOCKET_CONNECT_HOST
-                        + (index == 0 ? "" : Integer.toString(index));
-                final String portKey = Initiator.SETTING_SOCKET_CONNECT_PORT
-                        + (index == 0 ? "" : Integer.toString(index));
+                final String keySuffix = index == 0 ? "" : Integer.toString(index);
+                final String protocolKey = Initiator.SETTING_SOCKET_CONNECT_PROTOCOL + keySuffix;
+                final String hostKey = Initiator.SETTING_SOCKET_CONNECT_HOST + keySuffix;
+                final String portKey = Initiator.SETTING_SOCKET_CONNECT_PORT + keySuffix;
                 int transportType = ProtocolFactory.SOCKET;
                 if (settings.isSetting(sessionID, protocolKey)) {
                     try {
@@ -315,7 +323,7 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
     }
 
     protected void stopInitiators() {
-        for (Iterator<IoSessionInitiator> iterator = initiators.iterator(); iterator.hasNext();) {
+        for (Iterator<IoSessionInitiator> iterator = initiators.iterator(); iterator.hasNext(); ) {
             iterator.next().stop();
             iterator.remove();
         }
@@ -332,8 +340,8 @@ public abstract class AbstractSocketInitiator extends SessionConnector implement
     }
 
     protected abstract EventHandlingStrategy getEventHandlingStrategy();
-    
-    
+
+
     private static class QFScheduledReconnectThreadFactory implements ThreadFactory {
 
         private static final AtomicInteger COUNTER = new AtomicInteger(1);

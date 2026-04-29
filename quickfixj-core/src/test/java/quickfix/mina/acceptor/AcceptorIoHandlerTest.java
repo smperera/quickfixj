@@ -23,6 +23,7 @@ import org.apache.mina.core.session.IoSession;
 import org.junit.Test;
 import quickfix.FixVersions;
 import quickfix.Message;
+import quickfix.MessageUtils;
 import quickfix.Responder;
 import quickfix.Session;
 import quickfix.SessionFactoryTestSupport;
@@ -33,6 +34,7 @@ import quickfix.UnitTestApplication;
 import quickfix.field.ApplVerID;
 import quickfix.field.DefaultApplVerID;
 import quickfix.field.EncryptMethod;
+import quickfix.field.Headline;
 import quickfix.field.HeartBtInt;
 import quickfix.field.MsgSeqNum;
 import quickfix.field.MsgType;
@@ -42,6 +44,7 @@ import quickfix.field.TargetCompID;
 import quickfix.field.Text;
 import quickfix.fix44.Logout;
 import quickfix.fixt11.Logon;
+import quickfix.fix50.News;
 import quickfix.mina.EventHandlingStrategy;
 import quickfix.mina.NetworkingOptions;
 import quickfix.mina.SessionConnector;
@@ -56,10 +59,11 @@ import java.util.Properties;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.stub;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 public class AcceptorIoHandlerTest {
 
@@ -72,19 +76,20 @@ public class AcceptorIoHandlerTest {
     public void testFIXTLogonAndApplVerID() throws Exception {
         EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
         IoSession mockIoSession = mock(IoSession.class);
+        SessionSettings settings = mock(SessionSettings.class);
 
         final SessionID sessionID = new SessionID(FixVersions.BEGINSTRING_FIXT11, "SENDER",
                 "TARGET");
         try (Session session = SessionFactoryTestSupport.createSession(sessionID,
                 new UnitTestApplication(), false)) {
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null); // to create a new Session
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);    // to create a new Session
 
             final HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
             acceptorSessions.put(sessionID, session);
             final StaticAcceptorSessionProvider sessionProvider = createSessionProvider(acceptorSessions);
 
             final AcceptorIoHandler handler = new AcceptorIoHandler(sessionProvider,
-                    new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
 
             final DefaultApplVerID defaultApplVerID = new DefaultApplVerID(ApplVerID.FIX50SP2);
             final Logon message = new Logon(new EncryptMethod(EncryptMethod.NONE_OTHER),
@@ -101,16 +106,53 @@ public class AcceptorIoHandlerTest {
     }
 
     @Test
+    public void testFIXTLogonAndUnknownApplVerID() throws Exception {
+        EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
+        IoSession mockIoSession = mock(IoSession.class);
+        SessionSettings settings = mock(SessionSettings.class);
+
+        final SessionID sessionID = new SessionID(FixVersions.BEGINSTRING_FIXT11, "SENDER",
+                "TARGET");
+        final UnitTestApplication unitTestApplication = new UnitTestApplication();
+        try (Session session = SessionFactoryTestSupport.createSession(sessionID, unitTestApplication, false, false, true, true, new DefaultApplVerID(DefaultApplVerID.FIX50SP2))) {
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);    // to create a new Session
+
+            final HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
+            acceptorSessions.put(sessionID, session);
+            final StaticAcceptorSessionProvider sessionProvider = createSessionProvider(acceptorSessions);
+
+            final AcceptorIoHandler handler = new AcceptorIoHandler(sessionProvider,
+                    settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+
+            final DefaultApplVerID defaultApplVerID = new DefaultApplVerID("33");
+            final Logon message = new Logon(new EncryptMethod(EncryptMethod.NONE_OTHER),
+                    new HeartBtInt(30), defaultApplVerID);
+            message.getHeader().setString(TargetCompID.FIELD, sessionID.getSenderCompID());
+            message.getHeader().setString(SenderCompID.FIELD, sessionID.getTargetCompID());
+            message.getHeader().setField(new SendingTime(LocalDateTime.now()));
+            message.getHeader().setInt(MsgSeqNum.FIELD, 1);
+
+            handler.messageReceived(mockIoSession, message.toString());
+            session.next(message);
+
+            Message lastToAdminMessage = unitTestApplication.lastToAdminMessage();
+            assertEquals(MsgType.LOGOUT, MessageUtils.getMessageType(lastToAdminMessage.toString()));
+            assertTrue(lastToAdminMessage.getString(Text.FIELD).contains("Invalid DefaultApplVerID=33"));
+        }
+    }
+
+    @Test
     public void testMessageBeforeLogon() throws Exception {
         IoSession mockIoSession = mock(IoSession.class);
-        stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null);
+        SessionSettings settings = mock(SessionSettings.class);
+        when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);
 
         EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
 
         HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
 
         AcceptorIoHandler handler = new AcceptorIoHandler(createSessionProvider(acceptorSessions),
-                new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+                settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
 
         handler.processMessage(mockIoSession, new Logout());
 
@@ -125,9 +167,10 @@ public class AcceptorIoHandlerTest {
     @Test
     public void testMessageBeforeLogonWithBoundSession() throws Exception {
         IoSession mockIoSession = mock(IoSession.class);
+        SessionSettings settings = mock(SessionSettings.class);
 
         try (Session qfSession = SessionFactoryTestSupport.createSession()) {
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(qfSession);
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(qfSession);
 
             EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
 
@@ -140,7 +183,7 @@ public class AcceptorIoHandlerTest {
             HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
 
             AcceptorIoHandler handler = new AcceptorIoHandler(createSessionProvider(acceptorSessions),
-                    new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
 
             handler.processMessage(mockIoSession, logout);
 
@@ -152,8 +195,9 @@ public class AcceptorIoHandlerTest {
     @Test
     public void testMessageBeforeLogonWithKnownButUnboundSession() throws Exception {
         IoSession mockIoSession = mock(IoSession.class);
+        SessionSettings settings = mock(SessionSettings.class);
 
-        stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null);
+        when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);
 
         EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
 
@@ -171,7 +215,7 @@ public class AcceptorIoHandlerTest {
             HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
             acceptorSessions.put(qfSession.getSessionID(), qfSession);
             AcceptorIoHandler handler = new AcceptorIoHandler(createSessionProvider(acceptorSessions),
-                    new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
 
             handler.processMessage(mockIoSession, logout);
 
@@ -185,19 +229,20 @@ public class AcceptorIoHandlerTest {
     public void testLogonWithoutHeartBtInt() throws Exception {
         EventHandlingStrategy mockEventHandlingStrategy = mock(EventHandlingStrategy.class);
         IoSession mockIoSession = mock(IoSession.class);
+        SessionSettings settings = mock(SessionSettings.class);
 
         final SessionID sessionID = new SessionID(FixVersions.BEGINSTRING_FIXT11, "SENDER",
                 "TARGET");
         try (Session session = SessionFactoryTestSupport.createSession(sessionID,
                 new UnitTestApplication(), false)) {
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null); // to create a new Session
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);    // to create a new Session
 
             final HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
             acceptorSessions.put(sessionID, session);
             final StaticAcceptorSessionProvider sessionProvider = createSessionProvider(acceptorSessions);
 
             final AcceptorIoHandler handler = new AcceptorIoHandler(sessionProvider,
-                    new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), mockEventHandlingStrategy);
 
             final DefaultApplVerID defaultApplVerID = new DefaultApplVerID(ApplVerID.FIX50SP2);
             final Logon message = new Logon(new EncryptMethod(EncryptMethod.NONE_OTHER),
@@ -228,14 +273,14 @@ public class AcceptorIoHandlerTest {
             session.setRejectGarbledMessage(true);
             eventHandlingStrategy.blockInThread();
             Responder responder = new UnitTestResponder();
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null); // to create a new Session
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);    // to create a new Session
 
             final HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
             acceptorSessions.put(sessionID, session);
             final StaticAcceptorSessionProvider sessionProvider = createSessionProvider(acceptorSessions);
 
             final AcceptorIoHandler handler = new AcceptorIoHandler(sessionProvider,
-                    new NetworkingOptions(new Properties()), eventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), eventHandlingStrategy);
 
             final DefaultApplVerID defaultApplVerID = new DefaultApplVerID(ApplVerID.FIX50SP2);
             final Logon message = new Logon(new EncryptMethod(EncryptMethod.NONE_OTHER),
@@ -252,7 +297,7 @@ public class AcceptorIoHandlerTest {
 
             assertEquals(2, session.getStore().getNextTargetMsgSeqNum());
             assertEquals(2, session.getStore().getNextSenderMsgSeqNum());
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(session);
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(session);
 
             // garbled: character as group count
             String fixString = "8=FIXT.1.19=6835=B34=249=TARGET52=20180623-22:06:28.97756=SENDER148=foo33=a10=248";
@@ -331,14 +376,14 @@ public class AcceptorIoHandlerTest {
             session.setRejectGarbledMessage(true);
             eventHandlingStrategy.blockInThread();
             Responder responder = new UnitTestResponder();
-            stub(mockIoSession.getAttribute("QF_SESSION")).toReturn(null); // to create a new Session
+            when(mockIoSession.getAttribute("QF_SESSION")).thenReturn(null);    // to create a new Session
 
             final HashMap<SessionID, Session> acceptorSessions = new HashMap<>();
             acceptorSessions.put(sessionID, session);
             final StaticAcceptorSessionProvider sessionProvider = createSessionProvider(acceptorSessions);
 
             final AcceptorIoHandler handler = new AcceptorIoHandler(sessionProvider,
-                    new NetworkingOptions(new Properties()), eventHandlingStrategy);
+                    settings, new NetworkingOptions(new Properties()), eventHandlingStrategy);
 
             // garbled: missing msgtype
             String fixString = "8=FIXT.1.19=6834=349=TARGET52=20180623-22:06:28.97756=SENDER148=foo33=a10=248";

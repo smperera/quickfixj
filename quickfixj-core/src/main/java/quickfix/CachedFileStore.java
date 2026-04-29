@@ -28,6 +28,7 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -86,8 +87,6 @@ public class CachedFileStore implements MessageStore {
 
     private FileOutputStream headerFileOutputStream;
 
-    private final String charsetEncoding = CharsetSupport.getCharset();
-
     CachedFileStore(String path, SessionID sessionID, boolean syncWrites) throws IOException {
         this.syncWrites = syncWrites;
 
@@ -101,9 +100,7 @@ public class CachedFileStore implements MessageStore {
         sessionFileName = prefix + "session";
 
         final File directory = new File(msgFileName).getParentFile();
-        if (!directory.exists()) {
-            directory.mkdirs();
-        }
+        directory.mkdirs();
 
         initialize(false);
     }
@@ -163,13 +160,21 @@ public class CachedFileStore implements MessageStore {
         return cache.getCreationTime();
     }
 
+    /*
+     * (non-Javadoc)
+     * @see quickfix.MessageStore#getCreationTimeCalendar()
+     */
+    public Calendar getCreationTimeCalendar() throws IOException {
+        return cache.getCreationTimeCalendar();
+    }
+
     private void initializeSequenceNumbers() throws IOException {
         sequenceNumberFile.seek(0);
         if (sequenceNumberFile.length() > 0) {
             final String s = sequenceNumberFile.readUTF();
             final int offset = s.indexOf(':');
             if (offset < 0) {
-                throw new IOException("Invalid sequenceNumbderFile '" + seqNumFileName
+                throw new IOException("Invalid sequenceNumberFile '" + seqNumFileName
                         + "' character ':' is missing");
             }
             cache.setNextSenderMsgSeqNum(Integer.parseInt(s.substring(0, offset)));
@@ -308,16 +313,15 @@ public class CachedFileStore implements MessageStore {
         throw new UnsupportedOperationException("not supported");
     }
 
-    private String read(long offset, long size) throws IOException {
-        final byte[] data = new byte[(int) size];
-
-        messageFileReader.seek(offset);
-        if (messageFileReader.read(data) != size) {
-            throw new IOException("Truncated input while reading message: "
-                    + new String(data, charsetEncoding));
+    private String read(long offset, int size) throws IOException {
+        try {
+            final byte[] data = new byte[size];
+            messageFileReader.seek(offset);
+            messageFileReader.readFully(data);
+            return new String(data, CharsetSupport.getCharset());
+        } catch (EOFException eofe) { // can't read fully
+            throw new IOException("Truncated input while reading message: offset=" + offset + ", expected size=" + size, eofe);
         }
-
-        return new String(data, charsetEncoding);
     }
 
     private Collection<String> getMessage(long startSequence, long endSequence) throws IOException {
@@ -326,7 +330,7 @@ public class CachedFileStore implements MessageStore {
         final List<long[]> offsetAndSizes = messageIndex.get(startSequence, endSequence);
         for (final long[] offsetAndSize : offsetAndSizes) {
             if (offsetAndSize != null) {
-                final String message = read(offsetAndSize[0], offsetAndSize[1]);
+                final String message = read(offsetAndSize[0], (int) offsetAndSize[1]);
                 messages.add(message);
             }
         }
@@ -341,8 +345,9 @@ public class CachedFileStore implements MessageStore {
      */
     public boolean set(int sequence, String message) throws IOException {
         final long offset = messageFileWriter.getFilePointer();
-        final int size = message.length();
-        messageIndex.put((long) sequence, new long[] { offset, size });
+        final byte[] messageBytes = message.getBytes(CharsetSupport.getCharset());
+        final int size = messageBytes.length;
+        messageIndex.put((long) sequence, new long[]{offset, size});
         headerDataOutputStream.writeInt(sequence);
         headerDataOutputStream.writeLong(offset);
         headerDataOutputStream.writeInt(size);
@@ -350,7 +355,7 @@ public class CachedFileStore implements MessageStore {
         if (syncWrites) {
             headerFileOutputStream.getFD().sync();
         }
-        messageFileWriter.write(message.getBytes(CharsetSupport.getCharset()));
+        messageFileWriter.write(messageBytes);
         return true;
     }
 
@@ -481,7 +486,7 @@ public class CachedFileStore implements MessageStore {
                         final long offset = headerDataInputStream.readLong();
                         final int size = headerDataInputStream.readInt();
                         if (index == sequenceNumber) {
-                            return new long[] { offset, size };
+                            return new long[]{offset, size};
                         }
                     }
                 } catch (final IOException e) {
@@ -512,7 +517,7 @@ public class CachedFileStore implements MessageStore {
                         final long offset = headerDataInputStream.readLong();
                         final int size = headerDataInputStream.readInt();
                         if (sequenceNumber >= startSequence && sequenceNumber <= endSequence) {
-                            indexPerSequenceNumber.put(sequenceNumber, new long[] { offset, size });
+                            indexPerSequenceNumber.put(sequenceNumber, new long[]{offset, size});
                         }
                     }
                 } catch (final IOException e) {

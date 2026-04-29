@@ -70,15 +70,19 @@ public class MemoryStore implements MessageStore {
         return creationTime.getTime();
     }
 
-    /* package */void setCreationTime(Calendar creationTime) {
+    public Calendar getCreationTimeCalendar() throws IOException {
+        return creationTime;
+    }
+
+    void setCreationTime(Calendar creationTime) {
         this.creationTime = creationTime;
     }
 
-    public int getNextSenderMsgSeqNum() throws IOException {
+    public int getNextSenderMsgSeqNum() {
         return nextSenderMsgSeqNum;
     }
 
-    public int getNextTargetMsgSeqNum() throws IOException {
+    public int getNextTargetMsgSeqNum() {
         return nextTargetMsgSeqNum;
     }
 

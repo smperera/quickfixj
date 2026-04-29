@@ -1,6 +1,6 @@
 /*******************************************************************************
  * Copyright (c) quickfixengine.org  All rights reserved.
- *
+ * 
  * This file is part of the QuickFIX FIX Engine
  *
  * This file may be distributed under the terms of the quickfixengine.org
@@ -223,7 +223,6 @@ public class BanzaiApplication implements Application {
         }
 
         OrdStatus ordStatus = (OrdStatus) message.getField(new OrdStatus());
-
         if (ordStatus.valueEquals(OrdStatus.REJECTED)) {
             order.setRejected(true);
             order.setOpen(0);
@@ -234,6 +233,29 @@ public class BanzaiApplication implements Application {
         } else if (ordStatus.valueEquals(OrdStatus.NEW)) {
             if (order.isNew()) {
                 order.setNew(false);
+            }
+        } else if (ordStatus.valueEquals(OrdStatus.REPLACED)) {
+            OrderQty orderQty = new OrderQty();
+            message.getField(orderQty);
+            order.setQuantity((int)orderQty.getValue());
+
+            LeavesQty leavesQty = new LeavesQty();
+            message.getField(leavesQty);
+            order.setOpen((int)leavesQty.getValue());
+
+            CumQty cumQty = new CumQty();
+            message.getField(cumQty);
+            order.setExecuted((int)cumQty.getValue());
+
+            if (message.isSetField(Price.FIELD)){
+                Price price = new Price();
+                message.getField(price);
+                order.setLimit(price.getValue());
+            }
+            if (message.isSetField(StopPx.FIELD)){
+                StopPx stopPx = new StopPx();
+                message.getField(stopPx);
+                order.setStop(stopPx.getValue());
             }
         }
 
@@ -575,7 +597,7 @@ public class BanzaiApplication implements Application {
 
         typeMap.put(OrderType.MARKET, new OrdType(OrdType.MARKET));
         typeMap.put(OrderType.LIMIT, new OrdType(OrdType.LIMIT));
-        typeMap.put(OrderType.STOP, new OrdType(OrdType.STOP_STOP_LOSS));
+        typeMap.put(OrderType.STOP, new OrdType(OrdType.STOP));
         typeMap.put(OrderType.STOP_LIMIT, new OrdType(OrdType.STOP_LIMIT));
 
         tifMap.put(OrderTIF.DAY, new TimeInForce(TimeInForce.DAY));

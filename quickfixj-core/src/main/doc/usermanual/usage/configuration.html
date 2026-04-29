@@ -283,7 +283,7 @@
     <TD> Valid XML data dictionary file, QuickFIX/J comes with the following defaults in the <code>etc</code> directory:
         FIXT11.xml, FIX50.xml, FIX44.xml, FIX43.xml, FIX42.xml, FIX41.xml, FIX40.xml.
     </TD>
-    <TD>If DataDictionary is not specified and UserDataDictionary=Y, then QuickFIX/J will look for a
+    <TD>If DataDictionary is not specified and UseDataDictionary=Y, then QuickFIX/J will look for a
         default dictionary based on the session's BeginString (e.g., FIX.4.2 = FIX42.xml). The DataDictionary
         file search strategy is to use a URL, then the file system, and then the thread context classloader (if any),
         and then the DataDictionary instance's classloader. Default data dictionary files
@@ -366,6 +366,14 @@
     <TD>Y<br>
       N</TD>
     <TD>Y</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>FirstFieldInGroupIsDelimiter</I></TD>
+    <TD>Session validation setting for enabling whether first found field in repeating group will be used as
+        delimiter. Values are "Y" or "N". Default is "N". ValidateUnorderedGroupFields should be set to "N"</TD>
+    <TD>Y<br>
+        N</TD>
+    <TD>N</TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
     <TD><I>ValidateIncomingMessage</I></TD>
@@ -510,6 +518,13 @@
     <TD>&nbsp; </TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
+    <TD> <I>SocketConnectTimeout</I> </TD>
+
+    <TD> Connection timeout in seconds. Only used with a SocketInitiator </TD>
+    <TD> positive integer </TD>
+    <TD> 60 </TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
 
     <TD> <I>SocketConnectProtocol</I> </TD>
     <TD> Specifies the initiator communication protocol. The SocketConnectHost is not used with the VM_PIPE
@@ -528,23 +543,31 @@
     <TD>&nbsp; </TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
-
     <TD> <I>SocketConnectHost&lt;n&gt;</I> </TD>
     <TD> Alternate socket host(s) for connecting to a session for failover or load balancing,
          where <B>n</B> is a positive integer, i.e. SocketConnectHost1, SocketConnectHost2, etc.
          Must be consecutive and have a matching SocketConnectPort&lt;n&gt;
-         <p>
-      Connection list iteration rules:
-      <ul>
-        <li>Connections are tried one after another until one is successful: SocketConnectHost:SocketConnectPort,
-          SocketConnectHost1:SocketConnectPort1, etc.</li>
-        <li>Next connection attempt after a successful connection will start at first defined connection again:
-          SocketConnectHost:SocketConnectPort.</li>
-      </ul>
     </TD>
     <TD> valid IP address in the format of x.x.x.x or a domain name </TD>
 
     <TD>&nbsp; </TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD> <I>SocketConnectProtocol&lt;n&gt;</I> </TD>
+    <TD> Alternate socket protocol(s) for connecting to a session for failover or load balancing,
+         where <B>n</B> is a positive integer, i.e. SocketConnectProtocol1, SocketConnectProtocol2, etc.
+         Must be consecutive and have a matching SocketConnectHost & SocketConnectPort
+      <p>
+      Connection list iteration rules:
+      <ul>
+        <li>Connections are tried one after another until one is successful: SocketConnectProtocol - SocketConnectHost:SocketConnectPort,
+          SocketConnectProtocol1 - SocketConnectHost1:SocketConnectPort1, etc.</li>
+        <li>Next connection attempt after a successful connection will start at first defined connection again:
+          SocketConnectHost:SocketConnectPort.</li>
+      </ul>
+    </TD>
+    <TD> "TCP" or "VM_PIPE".  </TD>
+    <TD>"TCP" </TD>
   </TR>
   <tr>
     <TR ALIGN="left" VALIGN="middle">
@@ -600,6 +623,12 @@
     <TD> comma-separated list of hostnames or IP addresses parseable by <code>java.net.InetAddress</code>
     </TD>
     <TD> empty, ie all remote addresses are allowed </TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD> <I>AcceptorTemplate</I> </TD>
+    <TD> Designates a template Acceptor session. See <a href="acceptor_dynamic.html">Dynamic Acceptor Sessions</a></TD>
+    <TD> Y<BR>N</TD>
+    <TD>N</TD>
   </TR>
 
   <TR ALIGN="center" VALIGN="middle">
@@ -678,10 +707,28 @@
     <TD><a href="https://docs.oracle.com/javase/8/docs/technotes/guides/security/SunProviders.html">Java default cipher suites</a></TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
-    <TD valign="top"> <I>UseSNI</I></TD>
-    <TD>Configures the SSL engine to use Server Name Indication. This option is only useful to initiators.</TD>
-    <TD>Y<BR>N</TD>
-    <TD>N</TD>
+    <TD valign="top"> <I>EndpointIdentificationAlgorithm</I></TD>
+      <TD>Sets the endpoint identification algorithm. If the algorithm parameter is non-null, the endpoint identification/verification procedures must be handled during SSL/TLS handshaking. See
+          <a href="https://docs.oracle.com/javase/8/docs/technotes/guides/security/StandardNames.html#jssenames">Endpoint Identification
+          Algorithm Names</a></TD>
+    <TD></TD>
+    <TD></TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+      <TD valign="top"> <I>UseSNI</I></TD>
+      <TD>
+          Enables the SSL engine to use Server Name Indication (SNI). This option is only applicable for initiators.
+          <p>If provided, <i>SNIHostName</i> will be used as the server name. Otherwise, <i>SocketConnectHost</i> or <i>SocketConnectHost&lt;n&gt;</i> will be used.</p>
+          <p>Note: When this option is disabled, the JVM may still implicitly send the SSL <code>server_name</code> extension.</p>
+      </TD>
+      <TD>Y<BR>N</TD>
+      <TD>N</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+      <TD valign="top"> <I>SNIHostName</I></TD>
+      <TD>SNI host name to be used as desired Server Name Indication (SNI) parameter.</TD>
+      <TD></TD>
+      <TD></TD>
   </TR>
 
   <TR ALIGN="center" VALIGN="middle">
@@ -956,8 +1003,8 @@
     <TD><I>JdbcDriver</I></TD>
     <TD>JDBC driver for JDBC logger. Also used for JDBC log.</TD>
     <TD>Class name for the JDBC driver. Specify driver properties directly will cause the
-    creation of a Proxool data source that supports connection pooling. If you are using a
-    database with it's own pooling data source (e.g., Oracle) then use the <code>setDataSource()</code>
+    creation of a HikariCP data source that supports connection pooling. If you are using a
+    database with its own pooling data source (e.g., Oracle) then use the <code>setDataSource()</code>
     method on the Jdbc-related factories to set the data source directly.</TD>
     <TD>&nbsp;</TD>
   <TR ALIGN="left" VALIGN="middle">
@@ -1017,39 +1064,69 @@
     <TD>Any nonempty string.</TD>
     <TD>"" (empty string)</TD>
   </TR>
-
   <TR ALIGN="left" VALIGN="middle">
     <TD><I>JdbcMaxActiveConnection</I></TD>
     <TD>Specifies the maximum number of connections to the database.</TD>
-    <TD>Any number</TD>
+    <TD>Positive number</TD>
     <TD>32</TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
-    <TD><I>JdbcMaxActiveTime</I></TD>
-    <TD>Specifies if the housekeeper comes across a thread that has been active for longer than
-      this (milliseconds) then it will kill it. So make sure you set this to a number bigger than your
-      slowest expected response!</TD>
-    <TD>Any number</TD>
-    <TD>5000</TD>
+      <TD><I>JdbcMinIdleConnection</I></TD>
+      <TD>Controls the minimum number of idle connections that HikariCP tries to maintain in
+          the pool, including both idle and in-use connections. If the idle connections dip
+          below this value, HikariCP will make the best effort to restore them quickly and
+          efficiently.
+      </TD>
+      <TD>[0, JdbcMaxActiveConnection]</TD>
+      <TD>Same as JdbcMaxActiveConnection</TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
     <TD><I>JdbcMaxConnectionLifeTime</I></TD>
     <TD>Specifies the maximum amount of time that a connection exists for before
       it is killed (milliseconds).</TD>
-    <TD>Any number</TD>
-    <TD>28800000</TD>
+    <TD>Positive</TD>
+    <TD>28800000 ms (8 hours)</TD>
   </TR>
   <TR ALIGN="left" VALIGN="middle">
-    <TD><I>JdbcSimultaneousBuildThrottle</I></TD>
-    <TD>Specifies the maximum number of connections we can be building at any one time.
-        That is, the number of new connections that have been requested but aren't yet
-        available for use. Because connections can be built using more than one thread
-        (for instance, when they are built on demand) and it takes a finite time between
-        deciding to build the connection and it becoming available we need some way of
-        ensuring that a lot of threads don't all decide to build a connection at once.
-        (We could solve this in a smarter way - and indeed we will one day)</TD>
-    <TD>Any number</TD>
-    <TD>32</TD>
+    <TD><I>JdbcConnectionTimeout</I></TD>
+    <TD>Set the maximum number of milliseconds that a client will wait for a connection from the
+        pool. If this time is exceeded without a connection becoming available, an SQLException
+        will be thrown from javax.sql.DataSource.getConnection().</TD>
+    <TD>Non-negative number</TD>
+    <TD>250 ms</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>JdbcConnectionIdleTimeout</I></TD>
+    <TD>Controls the maximum amount of time that a connection is allowed to sit idle in the pool.
+        Whether a connection is retired as idle or not is subject to a maximum variation of +30 seconds, and
+        average variation of +15 seconds. A connection will never be retired as idle before this timeout.
+        A value of 0 means that idle connections are never removed from the pool.</TD>
+    <TD>Non-negative number</TD>
+    <TD>600000 ms (10 minutes)</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>JdbcConnectionKeepaliveTime</I></TD>
+    <TD>Controls the keepalive interval for a connection in the pool. An in-use connection will never be
+        tested by the keepalive thread, only when it is idle will it be tested.</TD>
+    <TD>Non-negative number</TD>
+    <TD>0 ms</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>JdbcConnectionKeepaliveTime</I></TD>
+    <TD>Controls the keepalive interval for a connection in the pool. An in-use connection will never be
+        tested by the keepalive thread, only when it is idle will it be tested.</TD>
+    <TD>Non-negative number</TD>
+    <TD>0 ms</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>JdbcConnectionTestQuery</I></TD>
+    <TD>Set the SQL query to be executed to test the validity of connections. Using the JDBC4
+        Connection.isValid() method to test connection validity can be more efficient on some
+        databases and is recommended. If your driver supports JDBC4 we strongly recommend not
+        setting this property.</TD>
+    <TD>Valid SQL query</TD>
+    <TD></TD>
+  </TR>
   </TR>
 
   <TR ALIGN="center" VALIGN="middle">
@@ -1147,7 +1224,7 @@
     <TD>&nbsp;</TD>
     <TD>&nbsp;</TD>
   <TR ALIGN="left" VALIGN="middle">
-    <TD><I>ScreenLogEvents</I></TD>
+    <TD><I>ScreenLogShowEvents</I></TD>
     <TD>Log events to screen.</TD>
     <TD>Y<BR>N</TD>
     <TD>Y</TD>
@@ -1177,7 +1254,7 @@
   </TR>
   <TR ALIGN="left" VALIGN="middle">
     <TD> <I>LogonTag</I> </TD>
-    <TD> Tag/value pair which will be set on sent or received Logon message. </TD>
+    <TD> Tag/value pair which will be set on sent Logon message. </TD>
     <TD> &lt;tag&gt;=&lt;value&gt;, where "tag" has to be a positive integer and "value" a String <br>
         Example: <br>
                  LogonTag=553=foo
@@ -1186,7 +1263,7 @@
   </TR>
   <TR ALIGN="left" VALIGN="middle">
     <TD> <I>LogonTag&lt;n&gt;</I> </TD>
-    <TD> Additional tag/value pairs which will be set on sent or received Logon message,<br>
+    <TD> Additional tag/value pairs which will be set on sent Logon message,<br>
          where <b>n</b> is a positive integer, i.e. LogonTag1, LogonTag2, etc.
          Must be consecutive.
     </TD>
@@ -1253,7 +1330,7 @@
   <TR ALIGN="left" VALIGN="middle">
     <TD> <I>ResendRequestChunkSize</I> </TD>
     <TD> Setting to limit the size of a resend request in case of missing messages.
-        This is useful when the remote FIX engine does not allow to ask for more than n message for a ResendRequest.
+        This is useful when the remote FIX engine does not allow to ask for more than n message for a ResendRequest. It also allows you to prevent a 'self-DDOS' by accidentally requesting a huge flood of messages your system isn't capable of processing if you are substantially behind for some reason.
         <P>
          E.g. if the ResendRequestChunkSize is set to 5 and a gap of 7 messages is detected,
          a first resend request will be sent for 5 messages.
@@ -1300,6 +1377,18 @@
   <TR ALIGN="left" VALIGN="middle">
     <TD><I>ForceResendWhenCorruptedStore</I></TD>
     <TD> Fill in heartbeats on resend when reading from message store fails. </TD>
+    <TD>Y<BR>N</TD>
+    <TD>N</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>LogMessageWhenSessionNotFound</I></TD>
+    <TD>Log the entire message when the corresponding session can not be found. Otherwise only the SessionID is logged.</TD>
+    <TD>Y<BR>N</TD>
+    <TD>Y</TD>
+  </TR>
+  <TR ALIGN="left" VALIGN="middle">
+    <TD><I>AllowPosDup</I></TD>
+    <TD>Whether to allow PossDupFlag and OrigSendingTime when sending messages. This is useful on occasions, primarily when a QFJ application is acting as purely a pass-through/monitoring hop.</TD>
     <TD>Y<BR>N</TD>
     <TD>N</TD>
   </TR>

@@ -19,6 +19,7 @@
 
 package quickfix;
 
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Date;
 import java.io.IOException;
@@ -31,7 +32,7 @@ import java.io.IOException;
 public interface MessageStore {
 
     /**
-     * Adds a raw fix messages to the store with the given sequence number.
+     * Adds a raw fix message to the store with the given sequence number.
      * (Most implementations just append the message data to the store so be
      * careful about assuming random access behavior.)
      *
@@ -72,6 +73,14 @@ public interface MessageStore {
      * @throws IOException IO error
      */
     Date getCreationTime() throws IOException;
+
+    /**
+     * Get the session creation time as a calendar object.
+     *
+     * @return the session creation time.
+     * @throws IOException IO error
+     */
+    Calendar getCreationTimeCalendar() throws IOException;
 
     /**
      * Reset the message store. Sequence numbers are set back to 1 and stored

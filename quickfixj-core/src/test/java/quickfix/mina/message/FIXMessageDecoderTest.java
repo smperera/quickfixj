@@ -29,6 +29,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.quickfixj.CharsetSupport;
+import quickfix.ValidationSettings;
 import quickfix.DataDictionaryTest;
 import quickfix.InvalidMessage;
 import quickfix.Message;
@@ -55,6 +56,7 @@ public class FIXMessageDecoderTest {
 
     @Before
     public void setUp() throws Exception {
+        CharsetSupport.setDefaultCharset();
         decoder = new FIXMessageDecoder();
         buffer = IoBuffer.allocate(8192);
         decoderOutput = new ProtocolDecoderOutputForTest();
@@ -62,17 +64,13 @@ public class FIXMessageDecoderTest {
 
     @After
     public void tearDown() throws Exception {
+        CharsetSupport.setDefaultCharset();
         buffer.clear();
     }
 
-    @Test
+    @Test(expected = UnsupportedEncodingException.class)
     public void testInvalidStringCharset() throws Exception {
-        try {
-            decoder = new FIXMessageDecoder("BOGUS");
-            fail("no exception thrown");
-        } catch (UnsupportedEncodingException e) {
-            // expected
-        }
+        decoder = new FIXMessageDecoder("BOGUS");
     }
 
     @Test
@@ -104,8 +102,6 @@ public class FIXMessageDecoderTest {
             doWesternEuropeanDecodingTest();
         } catch (InvalidMessage e) {
             // expected
-        } finally {
-            CharsetSupport.setCharset(CharsetSupport.getDefaultCharset());
         }
     }
 
@@ -121,7 +117,7 @@ public class FIXMessageDecoderTest {
         decoder.decode(null, byteBuffer, decoderOutput);
 
         Message decodedMessage = new Message(decoderOutput.getMessage(), DataDictionaryTest
-                .getDictionary(), true);
+                .getDictionary(), new ValidationSettings(), true);
 
         assertEquals("wrong text", headline, decodedMessage.getString(Headline.FIELD));
     }
@@ -489,5 +485,31 @@ public class FIXMessageDecoderTest {
 
         setUpBuffer(message);
         assertMessageFound(goodMessage);
+    }
+    
+    /**
+     * Several bad messages after each other should not send the decoder in an
+     * infinite loop. https://github.com/quickfix-j/quickfixj/issues/432
+     */
+    @Test(timeout = 1000)
+    public void testLengthFormatError() throws Exception {
+        String badMessages = "8=FIX.4.4\0019=058=\0018=FIX.4.4\0019=058=\0018=FIX.4.4\0019=058=\0018=FIX.4.4\0019=058=\001";
+        String goodMessage = "8=FIX.4.4\0019=12\00135=Y\001108=30\00110=037\001";
+        setUpBuffer(badMessages + goodMessage + badMessages + goodMessage);
+        assertMessageFound(goodMessage, 2);
+    }
+
+    /**
+     * Several bad messages after each other should not send the decoder in an
+     * infinite loop. https://github.com/quickfix-j/quickfixj/issues/432
+     */
+    @Test(timeout = 1000)
+    public void testLengthFormatError2() throws Exception {
+        decoder = new FIXMessageDecoder("UTF-16");
+        setUpBuffer("8=FIX.4.2\0019=128=FIX.4.2\0019=8=FIX.4.2\0019=128="
+                + "FIX.4.2\0019=8=FIX.4.2\0019=12\00135=X\001108=30\00110=049\001");
+        MessageDecoderResult decoderResult = decoder.decode(null, buffer, decoderOutput);
+        assertEquals("wrong decoder result", MessageDecoderResult.OK, decoderResult);
+        assertEquals("Wrong encoding", 14397, (int) decoderOutput.getMessage().charAt(0));
     }
 }

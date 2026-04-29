@@ -20,10 +20,9 @@
 package quickfix;
 
 import java.io.IOException;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
@@ -39,6 +38,9 @@ public final class SessionState {
 
     // MessageStore implementation must be thread safe
     private final MessageStore messageStore;
+
+    // MessageQueue implementation must be thread safe
+    private final MessageQueue messageQueue;
 
     private final Lock senderMsgSeqNumLock = new ReentrantLock();
     private final Lock targetMsgSeqNumLock = new ReentrantLock();
@@ -65,6 +67,12 @@ public final class SessionState {
     private boolean resetReceived;
     private String logoutReason;
 
+    /**
+     * Indicates whether resetting the internal state is still pending.
+     * Used when resetting sequence numbers after Logout.
+     */
+    private boolean resetStatePending = false;
+
     /*
      * If this is anything other than zero it's the value of the 789/NextExpectedMsgSeqNum tag in the last Logon message sent.
      * It is used to determine if the recipient has enough information (assuming they support 789) to avoid the need
@@ -73,14 +81,12 @@ public final class SessionState {
      */
     private final AtomicInteger nextExpectedMsgSeqNum = new AtomicInteger(0);
 
-    // The messageQueue should be accessed from a single thread
-    private final Map<Integer, Message> messageQueue = new LinkedHashMap<>();
-
     public SessionState(Object lock, Log log, int heartBeatInterval, boolean initiator, MessageStore messageStore,
-                        double testRequestDelayMultiplier, double heartBeatTimeoutMultiplier) {
+                        MessageQueue messageQueue, double testRequestDelayMultiplier, double heartBeatTimeoutMultiplier) {
         this.lock = lock;
         this.initiator = initiator;
         this.messageStore = messageStore;
+        this.messageQueue = messageQueue;
         setHeartBeatInterval(heartBeatInterval);
         this.log = log == null ? new NullLog() : log;
         this.testRequestDelayMultiplier = testRequestDelayMultiplier;
@@ -254,6 +260,10 @@ public final class SessionState {
         return messageStore;
     }
 
+    public MessageQueue getMessageQueue() {
+        return messageQueue;
+    }
+
     private int getTestRequestCounter() {
         synchronized (lock) {
             return testRequestCounter;
@@ -297,37 +307,6 @@ public final class SessionState {
 
     public void get(int first, int last, Collection<String> messages) throws IOException {
         messageStore.get(first, last, messages);
-    }
-
-    public void enqueue(int sequence, Message message) {
-        messageQueue.put(sequence, message);
-    }
-
-    public Message dequeue(int sequence) {
-        return messageQueue.remove(sequence);
-    }
-
-    /**
-     * Remove messages from messageQueue up to a given sequence number.
-     *
-     * @param seqnum up to which sequence number messages should be deleted
-     */
-    public void dequeueMessagesUpTo(int seqnum) {
-        for (int i = 1; i < seqnum; i++) {
-            dequeue(i);
-        }
-    }
-
-    public Message getNextQueuedMessage() {
-        return !messageQueue.isEmpty() ? messageQueue.values().iterator().next() : null;
-    }
-
-    public Collection<Integer> getQueuedSeqNums() {
-        return messageQueue.keySet();
-    }
-
-    public void clearQueue() {
-        messageQueue.clear();
     }
 
     public void lockSenderMsgSeqNum() {
@@ -432,6 +411,19 @@ public final class SessionState {
             this.resetSent = resetSent;
         }
     }
+    
+    public boolean isResetStatePending() {
+        synchronized (lock) {
+            return resetStatePending;
+        }
+    }
+
+    public void setResetStatePending(boolean resetStatePending) {
+        synchronized (lock) {
+            this.resetStatePending = resetStatePending;
+        }
+    }
+
 
     /**
      * No actual resend request has occurred but at logon we populated tag 789 so that the other side knows we
@@ -497,6 +489,10 @@ public final class SessionState {
 
     public Object getLock() {
         return lock;
+    }
+
+    public Calendar getCreationTimeCalendar() throws IOException {
+        return messageStore.getCreationTimeCalendar();
     }
 
     private final static class NullLog implements Log {

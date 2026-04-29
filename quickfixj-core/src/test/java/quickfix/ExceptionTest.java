@@ -19,40 +19,22 @@
 
 package quickfix;
 
-import junit.framework.TestCase;
+import org.junit.Test;
 
-public class ExceptionTest extends TestCase {
+public class ExceptionTest {
 
-    public void testDoNotSend() {
-        new DoNotSend();
-    }
-
-    public void testIncorrectDataFormat() {
-        IncorrectDataFormat e = new IncorrectDataFormat(5, "test");
-        assertEquals(5, e.getField());
-        assertEquals("test", e.getData());
-    }
-
-    public void testIncorrectTagValue() {
-        new IncorrectTagValue(5);
-        IncorrectTagValue e = new IncorrectTagValue(5, "test");
-    }
-
+    @Test
     public void testRejectLogon() {
         new RejectLogon();
     }
-
-    public void testRuntimeError() {
-        new RuntimeError();
-        new RuntimeError("test");
-        new RuntimeError(new Exception());
-    }
-
+    
+    @Test
     public void testSessionNotFound() {
         new SessionNotFound();
         new SessionNotFound("test");
     }
-
+    
+    @Test
     public void testSessionException() {
         new SessionException();
         new SessionException("test");

@@ -20,6 +20,7 @@
 package quickfix.mina.ssl;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Groups together SSL related configuration.
@@ -36,58 +37,9 @@ public class SSLConfig {
 	private String[] enabledProtocols;
 	private String[] enabledCipherSuites;
 	private boolean needClientAuth;
-	private boolean useSNI;
-
-	@Override
-	public boolean equals(Object obj) {
-		if (this == obj)
-			return true;
-		if (obj == null)
-			return false;
-		if (getClass() != obj.getClass())
-			return false;
-		SSLConfig other = (SSLConfig) obj;
-		if (!Arrays.equals(enabledCipherSuites, other.enabledCipherSuites))
-			return false;
-		if (!Arrays.equals(enabledProtocols, other.enabledProtocols))
-			return false;
-		if (keyManagerFactoryAlgorithm == null) {
-			if (other.keyManagerFactoryAlgorithm != null)
-				return false;
-		} else if (!keyManagerFactoryAlgorithm.equals(other.keyManagerFactoryAlgorithm))
-			return false;
-		if (keyStoreName == null) {
-			if (other.keyStoreName != null)
-				return false;
-		} else if (!keyStoreName.equals(other.keyStoreName))
-			return false;
-		if (!Arrays.equals(keyStorePassword, other.keyStorePassword))
-			return false;
-		if (keyStoreType == null) {
-			if (other.keyStoreType != null)
-				return false;
-		} else if (!keyStoreType.equals(other.keyStoreType))
-			return false;
-		if (needClientAuth != other.needClientAuth)
-			return false;
-		if (trustManagerFactoryAlgorithm == null) {
-			if (other.trustManagerFactoryAlgorithm != null)
-				return false;
-		} else if (!trustManagerFactoryAlgorithm.equals(other.trustManagerFactoryAlgorithm))
-			return false;
-		if (trustStoreName == null) {
-			if (other.trustStoreName != null)
-				return false;
-		} else if (!trustStoreName.equals(other.trustStoreName))
-			return false;
-		if (!Arrays.equals(trustStorePassword, other.trustStorePassword))
-			return false;
-		if(useSNI != other.useSNI)
-			return false;
-		if (trustStoreType == null) {
-			return other.trustStoreType == null;
-		} else return trustStoreType.equals(other.trustStoreType);
-	}
+	private String endpointIdentificationAlgorithm;
+    private boolean useSNI;
+    private String sniHostName;
 
 	public String[] getEnabledCipherSuites() {
 		return enabledCipherSuites;
@@ -129,34 +81,23 @@ public class SSLConfig {
 		return trustStoreType;
 	}
 
-	@Override
-	public int hashCode() {
-		final int prime = 31;
-		int result = 1;
-		result = prime * result + Arrays.hashCode(enabledCipherSuites);
-		result = prime * result + Arrays.hashCode(enabledProtocols);
-		result = prime * result + ((keyManagerFactoryAlgorithm == null) ? 0 : keyManagerFactoryAlgorithm.hashCode());
-		result = prime * result + ((keyStoreName == null) ? 0 : keyStoreName.hashCode());
-		result = prime * result + Arrays.hashCode(keyStorePassword);
-		result = prime * result + ((keyStoreType == null) ? 0 : keyStoreType.hashCode());
-		result = prime * result + (needClientAuth ? 1231 : 1237);
-		result = prime * result
-				+ ((trustManagerFactoryAlgorithm == null) ? 0 : trustManagerFactoryAlgorithm.hashCode());
-		result = prime * result + ((trustStoreName == null) ? 0 : trustStoreName.hashCode());
-		result = prime * result + Arrays.hashCode(trustStorePassword);
-		result = prime * result + ((trustStoreType == null) ? 0 : trustStoreType.hashCode());
-		return result;
-	}
-
 	public boolean isNeedClientAuth() {
 		return needClientAuth;
 	}
 
-	public boolean isUseSNI() {
-		return useSNI;
+	public String getEndpointIdentificationAlgorithm() {
+		return endpointIdentificationAlgorithm;
 	}
 
-	public void setEnabledCipherSuites(String[] enabledCipherSuites) {
+    public boolean isUseSNI() {
+        return useSNI;
+    }
+
+    public String getSniHostName() {
+        return sniHostName;
+    }
+
+    public void setEnabledCipherSuites(String[] enabledCipherSuites) {
 		this.enabledCipherSuites = enabledCipherSuites;
 	}
 
@@ -184,11 +125,19 @@ public class SSLConfig {
 		this.needClientAuth = needClientAuth;
 	}
 
-	public void setUseSNI(boolean useSNI) {
-		this.useSNI = useSNI;
+	public void setEndpointIdentificationAlgorithm(String endpointIdentificationAlgorithm) {
+		this.endpointIdentificationAlgorithm = endpointIdentificationAlgorithm;
 	}
 
-	public void setTrustManagerFactoryAlgorithm(String trustManagerFactoryAlgorithm) {
+    public void setUseSNI(boolean useSNI) {
+        this.useSNI = useSNI;
+    }
+
+    public void setSniHostName(String sniHostName) {
+        this.sniHostName = sniHostName;
+    }
+
+    public void setTrustManagerFactoryAlgorithm(String trustManagerFactoryAlgorithm) {
 		this.trustManagerFactoryAlgorithm = trustManagerFactoryAlgorithm;
 	}
 
@@ -202,5 +151,36 @@ public class SSLConfig {
 
 	public void setTrustStoreType(String trustStoreType) {
 		this.trustStoreType = trustStoreType;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) return true;
+		if (o == null || getClass() != o.getClass()) return false;
+		SSLConfig sslConfig = (SSLConfig) o;
+		return needClientAuth == sslConfig.needClientAuth &&
+				Objects.equals(keyStoreName, sslConfig.keyStoreName) &&
+				Arrays.equals(keyStorePassword, sslConfig.keyStorePassword) &&
+				Objects.equals(keyManagerFactoryAlgorithm, sslConfig.keyManagerFactoryAlgorithm) &&
+				Objects.equals(keyStoreType, sslConfig.keyStoreType) &&
+				Objects.equals(trustStoreName, sslConfig.trustStoreName) &&
+				Arrays.equals(trustStorePassword, sslConfig.trustStorePassword) &&
+				Objects.equals(trustManagerFactoryAlgorithm, sslConfig.trustManagerFactoryAlgorithm) &&
+				Objects.equals(trustStoreType, sslConfig.trustStoreType) &&
+				Arrays.equals(enabledProtocols, sslConfig.enabledProtocols) &&
+				Arrays.equals(enabledCipherSuites, sslConfig.enabledCipherSuites) &&
+				Objects.equals(endpointIdentificationAlgorithm, sslConfig.endpointIdentificationAlgorithm) &&
+                Objects.equals(useSNI, sslConfig.useSNI) &&
+                Objects.equals(sniHostName, sslConfig.sniHostName);
+	}
+
+	@Override
+	public int hashCode() {
+        int result = Objects.hash(keyStoreName, keyManagerFactoryAlgorithm, keyStoreType, trustStoreName, trustManagerFactoryAlgorithm, trustStoreType, needClientAuth, endpointIdentificationAlgorithm, useSNI, sniHostName);
+		result = 31 * result + Arrays.hashCode(keyStorePassword);
+		result = 31 * result + Arrays.hashCode(trustStorePassword);
+		result = 31 * result + Arrays.hashCode(enabledProtocols);
+		result = 31 * result + Arrays.hashCode(enabledCipherSuites);
+		return result;
 	}
 }
